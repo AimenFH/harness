@@ -1,5 +1,7 @@
 # Stage 1 demo: bug fix in Cosmic Python
 
+Results of the real model run: [`RESULTS.md`](RESULTS.md).
+
 ## Target repository
 
 | | |
