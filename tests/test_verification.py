@@ -169,7 +169,8 @@ def test_check_that_ran_zero_tests_fails(repo):
     result = Verifier(repo).verify()
 
     assert not result.passed
-    assert "Exit code: 0\nFAIL (no tests were run)" in result.checks_text()
+    # unittest exits 0 here before Python 3.12 and 5 from 3.12 on; FAIL either way.
+    assert "\nFAIL (no tests were run)" in result.checks_text()
 
 
 def test_git_helper_programs_are_not_run(repo, tmp_path):
