@@ -46,6 +46,14 @@ inside the copy.
 | -5 cannot be used to over-allocate (15 of 10 → `OutOfStock`) | FAIL | PASS |
 | positive quantity still allocates | PASS | PASS |
 
+On the starting commit the failures show the bug itself, not just the missing exception:
+
+```
+Failed: allocate(qty=0) was accepted: available stock 10 -> 10, committed=True
+Failed: allocate(qty=-5) was accepted: available stock 10 -> 15, committed=True
+3 failed, 1 passed
+```
+
 ## One-time setup
 
 ```bash
