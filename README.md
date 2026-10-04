@@ -46,6 +46,10 @@ tools       environment      task + selected files + tool results
 - **Modes:** `readonly` refuses every edit tool; `edit` allows changes inside `--root` only.
 - **Every request is checked** by the controller (tool name, argument names and types,
   path, mode) before anything runs; refused requests are counted as *denied*.
+- **`done` must be earned:** after changing files, the model may only call `done`
+  once a check has *passed* since its last change. Otherwise `done` is refused and
+  the model is told why (3 refusals in a row stop the run). With no changes,
+  `done` is always allowed, so the model can still report that it could not fix the task.
 - **Limits** (`config.py`): 20 model replies per run, stop after 3 malformed/denied
   replies in a row, tool output cut to 10 000 characters (marked `[OUTPUT TRUNCATED]`).
 - `--root` may not be `/`, your home folder, or a folder containing the harness itself.

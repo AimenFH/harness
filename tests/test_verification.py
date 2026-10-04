@@ -121,10 +121,12 @@ def run_main(monkeypatch, capsys, repo, replies):
     return exit_code, capsys.readouterr().out
 
 
-def test_model_claims_success_but_verification_fails(repo, monkeypatch, capsys):
+def test_model_claims_success_but_verification_fails(tmp_path, monkeypatch, capsys):
+    # The model changes nothing (so it may call done without a check), but
+    # the repository's test fails. Verification must not believe the claim.
+    repo = commit_all(hello_repo(tmp_path, test_code=FAILING_TEST))
     exit_code, output = run_main(monkeypatch, capsys, repo, [
-        {"tool": "edit_file", "arguments": {"path": "hello.py",
-                                            "content": "def greet():\n    return 42\n"}},
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},
         {"tool": "done", "arguments": {}, "summary": "All tests pass!"},   # not true
     ])
 
