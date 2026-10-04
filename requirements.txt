@@ -1,0 +1,4 @@
+# Talks to the local Ollama HTTP API.
+requests>=2.28
+# Test runner.
+pytest
