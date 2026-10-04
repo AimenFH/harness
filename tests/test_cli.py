@@ -114,3 +114,37 @@ def test_dangerous_roots_are_rejected(dangerous_root):
     with pytest.raises(SystemExit) as error:
         parse_config(make_args(root))
     assert error.value.code == 2
+
+
+def test_selected_files_are_stored(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    config = parse_config(make_args(tmp_path) + ["--file", "a.py", "--file", "./a.py"])
+    assert config.context_files == ("a.py", "./a.py")
+
+
+def test_no_files_selected_by_default(tmp_path):
+    assert parse_config(make_args(tmp_path)).context_files == ()
+
+
+@pytest.mark.parametrize("bad_file", ["missing.py", "../outside.txt", "sub"])
+def test_bad_selected_file_is_rejected(tmp_path, bad_file):
+    root = tmp_path / "repo"
+    (root / "sub").mkdir(parents=True)
+    (tmp_path / "outside.txt").write_text("secret\n")
+    with pytest.raises(SystemExit) as error:
+        parse_config(make_args(root) + ["--file", bad_file])
+    assert error.value.code == 2
+
+
+def test_selected_file_is_sent_to_the_model(tmp_path, capsys, monkeypatch):
+    import main as main_module
+    from model_client import ScriptedModelClient
+
+    (tmp_path / "a.py").write_text("SELECTED_CONTENT = 1\n")
+    model = ScriptedModelClient([{"tool": "done", "arguments": {}}])
+    monkeypatch.setattr(main_module, "build_model", lambda config: model)
+
+    main(make_args(tmp_path) + ["--file", "a.py"])
+
+    assert "SELECTED_CONTENT = 1" in model.received[0][1]["content"]
+    assert "Files:   a.py" in capsys.readouterr().out

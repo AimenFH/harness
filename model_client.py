@@ -151,11 +151,17 @@ def build_system_prompt(mode="edit", checks=("unittest", "pytest")):
     ])
 
 
-def initial_messages(task, mode="edit", checks=("unittest", "pytest")):
-    """Return the first two messages of a conversation: system prompt + task."""
+def initial_messages(task, mode="edit", checks=("unittest", "pytest"), context=""):
+    """Return the first two messages of a conversation: system prompt + task.
+
+    `context` is optional text (e.g. files the user selected) added after the task.
+    """
+    request = f"Task: {task}"
+    if context:
+        request += "\n\n" + context
     return [
         {"role": "system", "content": build_system_prompt(mode, checks)},
-        {"role": "user", "content": f"Task: {task}"},
+        {"role": "user", "content": request},
     ]
 
 

@@ -120,14 +120,19 @@ class Controller:
 
     # ----- the loop ----------------------------------------------------------
 
-    def run(self, task):
-        """Work on `task` until done, a limit is reached, or a fatal error."""
+    def run(self, task, context_files=()):
+        """Work on `task` until done, a limit is reached, or a fatal error.
+
+        `context_files` are paths the user selected; their content is sent
+        with the task so the model does not have to ask for them first.
+        """
         self.counters = Counters()
         self.changed_files = []
         self.last_check = None
         self.partly_read = set()  # files the model has only seen truncated
         rejected_in_a_row = 0
-        messages = initial_messages(task, self.config.mode, self._check_names())
+        messages = initial_messages(task, self.config.mode, self._check_names(),
+                                    self.selected_files_text(context_files))
 
         while True:
             # Action limit: checked BEFORE asking, so nothing runs past it.
@@ -174,6 +179,32 @@ class Controller:
                     f"Stopped: {rejected_in_a_row} malformed or denied requests in a row "
                     f"(limit {self.config.max_retries}).",
                 )
+
+    # ----- basic context -----------------------------------------------------
+
+    def selected_files_text(self, paths):
+        """Text with the content of the files the user selected for the task.
+
+        Files are read through the same safe tools as the model's read_file,
+        so a path outside the root is refused here too. Each file is cut to
+        max_output_chars; a cut file may not be rewritten with edit_file.
+        """
+        if not paths:
+            return ""
+        parts = ["Files selected by the user:"]
+        for path in paths:
+            try:
+                text = self.tools.read_file(path)
+            except RepositoryError as error:
+                self.log(f"[context] could not include {path}: {error}")
+                parts.append(f"--- {path} ---\n(not included: {error})")
+                continue
+            text, was_cut = truncate(text, self.config.max_output_chars)
+            if was_cut:
+                self.partly_read.add(self._key(path))
+            self.log(f"[context] {path}{' (truncated)' if was_cut else ''}")
+            parts.append(f"--- {path} ---\n{text}")
+        return "\n\n".join(parts)
 
     # ----- validation and dispatch -------------------------------------------
 
