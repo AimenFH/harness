@@ -261,3 +261,42 @@ def test_replace_text_not_found_is_a_tool_error(repo):
     assert "was not found" in tool_result_sent(h.model, 1)
     assert result.counters.tool_errors == 1
     assert result.changed_files == []
+
+
+# Selected files are part of the basic context -------------------------------
+
+def test_selected_files_are_sent_with_the_task(repo):
+    h = make_harness(repo, [{"tool": "done", "arguments": {}, "summary": "Finished"}])
+
+    h.controller.run("Check hello.py", context_files=["hello.py"])
+
+    first_request = h.model.received[0][1]
+    assert first_request["role"] == "user"
+    assert first_request["content"].startswith("Task: Check hello.py")
+    assert "--- hello.py ---" in first_request["content"]
+    assert 'return "hello"' in first_request["content"]
+    assert "[context] hello.py" in h.log
+
+
+def test_selected_file_outside_root_is_not_included(repo):
+    h = make_harness(repo, [{"tool": "done", "arguments": {}, "summary": "Finished"}])
+
+    h.controller.run("Check", context_files=["../outside.txt"])
+
+    first_request = h.model.received[0][1]["content"]
+    assert "secret" not in first_request
+    assert "not included" in first_request
+
+
+def test_truncated_selected_file_cannot_be_overwritten(repo):
+    (repo / "big.py").write_text("x = 1\n" * 100)
+    h = make_harness(repo, [
+        {"tool": "edit_file", "arguments": {"path": "big.py", "content": "x = 2\n"}},
+        {"tool": "done", "arguments": {}, "summary": "Finished"},
+    ], max_output_chars=50)
+
+    h.controller.run("Change big.py", context_files=["big.py"])
+
+    assert h.tools.calls == [("read_file", "big.py")]  # only the context read, no edit
+    assert h.controller.counters.denied == 1
+    assert (repo / "big.py").read_text() == "x = 1\n" * 100

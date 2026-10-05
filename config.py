@@ -42,8 +42,9 @@ class OllamaSettings:
 class Config:
     """Settings for one run of the harness.
 
-    root, task, mode, model, offline and the check (check_command and
-    final_checks) come from the command line. The rest are defaults.
+    root, task, mode, model, offline, context_files and the check
+    (check_command and final_checks) come from the command line. The rest
+    are defaults.
     """
 
     root: Path
@@ -51,6 +52,7 @@ class Config:
     mode: str
     model: str
     offline: bool = False
+    context_files: tuple = ()  # files the user selected to send with the task
 
     ollama_url: str = DEFAULT_OLLAMA_URL
     model_timeout_seconds: int = 300  # local models can be slow, esp. the first call
@@ -80,5 +82,6 @@ class Config:
             f"Mode:    {self.mode}",
             f"Model:   {self.model}",
             f"Offline: {'yes' if self.offline else 'no'}",
+            f"Files:   {', '.join(self.context_files) or '(none selected)'}",
         ]
         return "\n".join(lines)

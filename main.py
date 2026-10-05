@@ -2,7 +2,7 @@
 
 Example:
     python main.py --root ./target-repo --task "Fix the incorrect total" \
-        --mode readonly --model llama3.1
+        --mode readonly --model llama3.1 --file src/orders.py
 
 It parses and validates the arguments, builds the tools and the model
 client, and hands everything to the Controller, which runs the loop.
@@ -64,6 +64,15 @@ def build_parser():
         help="Do not contact Ollama (for scripted/fake model testing).",
     )
     parser.add_argument(
+        "--file",
+        action="append",
+        default=[],
+        dest="files",
+        metavar="PATH",
+        help="A file (relative to --root) to send to the model with the task. "
+             "Repeat to select several files.",
+    )
+    parser.add_argument(
         "--check",
         default="unittest",
         choices=sorted(ALLOWED_COMMANDS),
@@ -103,12 +112,20 @@ def parse_config(argv=None):
     if not model:
         parser.error("--model must not be empty")
 
+    for path in args.files:
+        target = (root / path).resolve()
+        if not target.is_relative_to(root):
+            parser.error(f"--file must be inside --root: {path}")
+        if not target.is_file():
+            parser.error(f"--file is not a file: {path}")
+
     return Config(
         root=root,
         task=task,
         mode=args.mode,
         model=model,
         offline=args.offline,
+        context_files=tuple(args.files),
         check_command=args.check,
         final_checks=(args.check,),
     )
@@ -155,7 +172,7 @@ def main(argv=None):
         executor=ExecutionEnvironment(config.root, config.command_timeout_seconds),
     )
     section("Progress")
-    run = controller.run(config.task)
+    run = controller.run(config.task, config.context_files)
 
     # Verification runs no matter what the model said.
     verifier = Verifier(config.root, config.final_checks, config.command_timeout_seconds)
