@@ -75,6 +75,15 @@ def test_system_prompt_mentions_key_rules():
         assert text in prompt
 
 
+def test_run_check_example_does_not_name_a_check():
+    # A small model copied {"name": "unittest"} from the example and ran
+    # unittest although the run was configured for pytest.
+    prompt = build_system_prompt(mode="edit", checks=("pytest", "unittest"))
+    run_check_line = next(line for line in prompt.splitlines() if line.startswith("- run_check"))
+    assert '"name"' not in run_check_line.split("->")[0]
+    assert "(pytest)" in run_check_line
+
+
 def test_readonly_prompt_hides_edit_file():
     prompt = build_system_prompt(mode="readonly")
     assert "edit_file" not in prompt
