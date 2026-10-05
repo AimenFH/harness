@@ -10,6 +10,10 @@ argument list to run. Commands always run with:
   started are killed, so nothing keeps running or writing afterwards,
 - a reduced environment, so secrets in environment variables (API keys,
   tokens) are not visible to the repository's code.
+
+With a DockerSandbox, the command runs inside a throwaway container that
+only sees the repository copy (read-only), has no network and none of the
+host's files. That is the contained environment for repository code.
 """
 
 import os
@@ -18,6 +22,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -57,6 +62,106 @@ def command_env():
     return env
 
 
+# ----- sandbox ----------------------------------------------------------------
+
+SANDBOX_IMAGE = "harness-sandbox"  # built from sandbox/Dockerfile
+SANDBOX_WORKDIR = "/work"          # where the repository copy appears in the container
+
+# Settings the docker program itself needs to find the Docker engine. They are
+# given to the docker client on this machine only, never to the container.
+DOCKER_CLIENT_VARS = ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH",
+                      "DOCKER_TLS_VERIFY", "XDG_RUNTIME_DIR")
+
+# The only host variable passed into the container (lets the user pass pytest options).
+CONTAINER_VARS = ("PYTEST_ADDOPTS",)
+
+
+def docker_client_env():
+    """The environment for the docker program: command_env() plus Docker's own settings."""
+    env = command_env()
+    env.update({name: os.environ[name] for name in DOCKER_CLIENT_VARS if name in os.environ})
+    return env
+
+
+class DockerSandbox:
+    """Runs commands inside a throwaway Docker container.
+
+    The container:
+      - sees only the repository copy, mounted read-only at /work
+        (plus any extra read-only `mounts`, e.g. an acceptance check),
+      - has no network, so tests cannot send data anywhere,
+      - gets no host environment variables except CONTAINER_VARS,
+      - runs as a normal user with no Linux capabilities, a read-only
+        system, and limits on memory, CPU and number of processes,
+      - is removed afterwards (--rm), or force-removed on timeout.
+
+    Host files such as ~/.ssh or cloud credentials simply do not exist inside it.
+    """
+
+    def __init__(self, image=SANDBOX_IMAGE, docker="docker", mounts=()):
+        """
+        image:  Docker image with Python, pytest and the target's packages
+        docker: the docker program (changeable for tests)
+        mounts: extra (host path, container path) pairs, mounted read-only
+        """
+        self.image = image
+        self.docker = docker
+        self.mounts = list(mounts)
+
+    def describe(self):
+        return f"docker (image {self.image}, no network, read-only repository)"
+
+    def check(self):
+        """Raise ExecutionError with a clear fix if Docker or the image is missing."""
+        try:
+            done = subprocess.run([self.docker, "image", "inspect", self.image],
+                                  capture_output=True, text=True, timeout=60,
+                                  env=docker_client_env())
+        except OSError:
+            raise ExecutionError(
+                f"Docker is not installed ({self.docker!r} not found). Install Docker, "
+                "or run with --sandbox none (checks are then NOT contained).") from None
+        except subprocess.TimeoutExpired:
+            raise ExecutionError("Docker did not answer within 60s. Is it running?") from None
+        if done.returncode != 0:
+            reason = (done.stderr.strip().splitlines() or ["unknown error"])[0]
+            raise ExecutionError(
+                f"Sandbox image {self.image!r} is not available ({reason}). Start Docker and "
+                f"build the image: docker build -t {self.image} -f sandbox/Dockerfile .")
+
+    def wrap(self, command, root, container_name):
+        """Return the docker command that runs `command` in a fresh container."""
+        # The harness's own Python path means nothing inside the container.
+        if command and command[0] == PYTHON:
+            command = ["python"] + list(command[1:])
+        args = [
+            self.docker, "run", "--rm", "--name", container_name,
+            "--network", "none",
+            "--read-only", "--tmpfs", "/tmp",
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--pids-limit", "256", "--memory", "1g", "--cpus", "2",
+            "--mount", f"type=bind,source={root},target={SANDBOX_WORKDIR},readonly",
+            "--workdir", SANDBOX_WORKDIR,
+            "--env", "HOME=/tmp",
+        ]
+        for host_path, container_path in self.mounts:
+            args += ["--mount", f"type=bind,source={host_path},target={container_path},readonly"]
+        container_env = dict(EXTRA_ENV)
+        container_env.update({name: os.environ[name] for name in CONTAINER_VARS
+                              if name in os.environ})
+        for name, value in container_env.items():
+            args += ["--env", f"{name}={value}"]
+        return args + [self.image] + list(command)
+
+    def stop(self, container_name):
+        """Force-remove a container that may still be running. Safe to call twice."""
+        try:
+            subprocess.run([self.docker, "rm", "--force", container_name],
+                           capture_output=True, timeout=60, env=docker_client_env())
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
 class ExecutionError(Exception):
     """A command request was refused (for example, it is not allowed)."""
 
@@ -73,6 +178,7 @@ class CommandResult:
     timed_out: bool
     duration_seconds: float
     no_tests_ran: bool = False  # a test command that found nothing to run
+    sandbox: str = ""           # where it ran, e.g. "docker (...)"; "" = directly on this machine
 
     @property
     def succeeded(self):
@@ -96,6 +202,7 @@ class CommandResult:
         """Return a readable multi-line report including all output."""
         return "\n".join([
             f"Command: {' '.join(self.command)}",
+            f"Sandbox: {self.sandbox or 'none (ran directly on this machine)'}",
             f"Status:  {self.status()}",
             "--- stdout ---",
             self.stdout.rstrip() or "(empty)",
@@ -107,8 +214,9 @@ class CommandResult:
 class ExecutionEnvironment:
     """Runs allowed commands inside one repository, with a timeout."""
 
-    def __init__(self, root, timeout_seconds=30, allowed_commands=None):
-        """Store the repository root, timeout and the command whitelist."""
+    def __init__(self, root, timeout_seconds=30, allowed_commands=None, sandbox=None):
+        """Store the repository root, timeout, the command whitelist and the
+        sandbox (None runs commands directly on this machine)."""
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise ExecutionError(f"Repository root is not a directory: {self.root}")
@@ -116,6 +224,7 @@ class ExecutionEnvironment:
             raise ExecutionError("timeout_seconds must be greater than 0")
         self.timeout_seconds = timeout_seconds
         self.allowed_commands = allowed_commands or ALLOWED_COMMANDS
+        self.sandbox = sandbox
 
     def available_commands(self):
         """Return the names of the commands that may be run."""
@@ -129,22 +238,27 @@ class ExecutionEnvironment:
                 f"Allowed commands: {', '.join(self.available_commands())}"
             )
         command = list(self.allowed_commands[name])
+        launch, env, container, where = command, command_env(), None, ""
+        if self.sandbox:
+            container = f"harness-check-{uuid.uuid4().hex[:12]}"
+            launch = self.sandbox.wrap(command, self.root, container)
+            env, where = docker_client_env(), self.sandbox.describe()
 
         start = time.monotonic()
         try:
             process = subprocess.Popen(
-                command,                 # a list, so no shell is involved
+                launch,                  # a list, so no shell is involved
                 cwd=self.root,           # always inside the target repository
                 stdout=subprocess.PIPE,  # collect stdout ...
                 stderr=subprocess.PIPE,  # ... and stderr
                 text=True,               # give us str instead of bytes
-                env=command_env(),
+                env=env,
                 **NEW_PROCESS_GROUP,     # so we can kill everything it starts
             )
         except OSError as error:
             # For example, the program does not exist.
             return CommandResult(name, command, None, "", f"Could not start command: {error}",
-                                 False, time.monotonic() - start)
+                                 False, time.monotonic() - start, sandbox=where)
 
         timed_out = False
         try:
@@ -152,10 +266,12 @@ class ExecutionEnvironment:
         except subprocess.TimeoutExpired:
             timed_out = True
             kill_process_tree(process)
+            self._stop_container(container)  # killing the docker client does not stop it
             stdout, stderr = _collect_after_kill(process)
         except BaseException:
             # E.g. Ctrl+C: don't leave the command running behind us.
             kill_process_tree(process)
+            self._stop_container(container)
             raise
         finally:
             # Also remove anything the command left running in the background.
@@ -171,7 +287,12 @@ class ExecutionEnvironment:
             timed_out=timed_out,
             duration_seconds=time.monotonic() - start,
             no_tests_ran=no_tests,
+            sandbox=where,
         )
+
+    def _stop_container(self, container):
+        if self.sandbox and container:
+            self.sandbox.stop(container)
 
 
 # Start each command in its own process group (POSIX: new session), so that

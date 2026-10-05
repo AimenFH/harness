@@ -73,7 +73,7 @@ def test_missing_required_option_is_rejected(tmp_path):
 
 
 def test_main_prints_summary(tmp_path, capsys):
-    main(make_args(tmp_path) + ["--offline"])
+    main(make_args(tmp_path) + ["--offline", "--sandbox", "none"])
     output = capsys.readouterr().out
 
     assert "=== Task ===" in output
@@ -144,7 +144,7 @@ def test_selected_file_is_sent_to_the_model(tmp_path, capsys, monkeypatch):
     model = ScriptedModelClient([{"tool": "done", "arguments": {}}])
     monkeypatch.setattr(main_module, "build_model", lambda config: model)
 
-    main(make_args(tmp_path) + ["--file", "a.py"])
+    main(make_args(tmp_path) + ["--file", "a.py", "--sandbox", "none"])
 
     assert "SELECTED_CONTENT = 1" in model.received[0][1]["content"]
     assert "Files:   a.py" in capsys.readouterr().out

@@ -91,7 +91,8 @@ def _check_text(check: CommandResult):
     else:
         verdict = "FAIL"
 
-    lines = [command, f"Exit code: {exit_code}", verdict]
+    sandbox = check.sandbox or "none (ran directly on this machine)"
+    lines = [command, f"Sandbox: {sandbox}", f"Exit code: {exit_code}", verdict]
     if not check.succeeded:
         output = "\n".join(part.rstrip() for part in (check.stdout, check.stderr) if part.strip())
         lines += ["--- output ---", output or "(no output)"]
@@ -101,14 +102,17 @@ def _check_text(check: CommandResult):
 class Verifier:
     """Runs the final checks and inspects the repository with git."""
 
-    def __init__(self, root, check_names=("unittest",), timeout_seconds=30, git="git"):
+    def __init__(self, root, check_names=("unittest",), timeout_seconds=30, git="git",
+                 sandbox=None):
         """
         root:        the target repository
         check_names: names from execution.ALLOWED_COMMANDS to run at the end
         git:         the git program (changeable for tests)
+        sandbox:     where the checks run (e.g. a DockerSandbox); None = this machine.
+                     git always runs here: it is the harness's tool, not repository code.
         """
         self.check_names = list(check_names)
-        self.checks = ExecutionEnvironment(root, timeout_seconds)
+        self.checks = ExecutionEnvironment(root, timeout_seconds, sandbox=sandbox)
         self.git = ExecutionEnvironment(root, timeout_seconds, allowed_commands=git_commands(git))
         self.files = RepositoryTools(root, mode="readonly")  # to show new files safely
 
