@@ -121,10 +121,12 @@ def run_main(monkeypatch, capsys, repo, replies):
     return exit_code, capsys.readouterr().out
 
 
-def test_model_claims_success_but_verification_fails(repo, monkeypatch, capsys):
+def test_model_claims_success_but_verification_fails(tmp_path, monkeypatch, capsys):
+    # The model changes nothing (so it may call done without a check), but
+    # the repository's test fails. Verification must not believe the claim.
+    repo = commit_all(hello_repo(tmp_path, test_code=FAILING_TEST))
     exit_code, output = run_main(monkeypatch, capsys, repo, [
-        {"tool": "edit_file", "arguments": {"path": "hello.py",
-                                            "content": "def greet():\n    return 42\n"}},
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},
         {"tool": "done", "arguments": {}, "summary": "All tests pass!"},   # not true
     ])
 
@@ -169,7 +171,8 @@ def test_check_that_ran_zero_tests_fails(repo):
     result = Verifier(repo).verify()
 
     assert not result.passed
-    assert "FAIL (no tests were run)" in result.checks_text()
+    # unittest exits 0 here before Python 3.12 and 5 from 3.12 on; FAIL either way.
+    assert "\nFAIL (no tests were run)" in result.checks_text()
 
 
 def test_git_helper_programs_are_not_run(repo, tmp_path):

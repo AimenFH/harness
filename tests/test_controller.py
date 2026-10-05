@@ -5,9 +5,9 @@ No Ollama is needed. Action-limit and truncation tests are in test_limits.py.
 
 import pytest
 
-from controller import DONE, ERROR, Controller
+from controller import DONE, ERROR, RETRY_LIMIT, Controller
 from model_client import Action, ModelError
-from tests.helpers import FAILING_TEST, hello_repo, make_harness, tool_result_sent
+from tests.helpers import FAILING_TEST, HELLO_PY, hello_repo, make_harness, tool_result_sent
 
 
 @pytest.fixture
@@ -300,3 +300,69 @@ def test_truncated_selected_file_cannot_be_overwritten(repo):
     assert h.tools.calls == [("read_file", "big.py")]  # only the context read, no edit
     assert h.controller.counters.denied == 1
     assert (repo / "big.py").read_text() == "x = 1\n" * 100
+
+
+# done is refused until a check has passed after the last change -------------
+
+FIXED_HELLO = 'def greet():\n    return "goodbye"\n'
+BROKEN_HELLO = 'def greet():\n    return 42\n'
+
+
+def test_done_without_check_after_edit_is_refused(tmp_path):
+    repo = hello_repo(tmp_path, test_code=FAILING_TEST)
+    h = make_harness(repo, [
+        {"tool": "edit_file", "arguments": {"path": "hello.py", "content": FIXED_HELLO}},
+        {"tool": "done", "arguments": {}, "summary": "Fixed"},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "Fixed and tested"},
+    ])
+
+    result = h.controller.run("Fix it")
+
+    assert "have not run a check" in tool_result_sent(h.model, 2)
+    assert h.controller.counters.denied == 1
+    assert result.status == DONE
+    assert result.summary == "Fixed and tested"
+
+
+def test_done_after_failing_check_is_refused(repo):
+    # The real qwen2.5-coder:7b run: the check failed and the model called done anyway.
+    h = make_harness(repo, [
+        {"tool": "edit_file", "arguments": {"path": "hello.py", "content": BROKEN_HELLO}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "No tests were run, so the change was made."},
+        {"tool": "edit_file", "arguments": {"path": "hello.py", "content": HELLO_PY}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "Reverted; tests pass."},
+    ])
+
+    result = h.controller.run("Change it")
+
+    refusal = tool_result_sent(h.model, 3)
+    assert refusal.startswith("DENIED: Not finished: the last check FAILED")
+    assert result.status == DONE
+    assert result.summary == "Reverted; tests pass."
+
+
+def test_edit_after_passing_check_needs_a_new_check(repo):
+    h = make_harness(repo, [
+        {"tool": "run_check", "arguments": {}},   # passes, but before the edit
+        {"tool": "edit_file", "arguments": {"path": "hello.py", "content": BROKEN_HELLO}},
+        {"tool": "done", "arguments": {}, "summary": "Done"},
+        {"tool": "done", "arguments": {}, "summary": "Done"},
+        {"tool": "done", "arguments": {}, "summary": "Done"},
+    ], max_retries=3)
+
+    result = h.controller.run("Change it")
+
+    assert result.status == RETRY_LIMIT    # refusing done 3 times in a row stops the run
+    assert h.controller.counters.denied == 3
+
+
+def test_done_without_changes_needs_no_check(repo):
+    h = make_harness(repo, [
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},
+        {"tool": "done", "arguments": {}, "summary": "Could not find the bug."},
+    ])
+
+    assert h.controller.run("Find it").status == DONE

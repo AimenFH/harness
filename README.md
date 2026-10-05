@@ -74,6 +74,7 @@ To prevent the LLM from performing destructive actions or accessing sensitive da
     *   **Action Limit**: Maximum number of model replies per session.
     *   **Output Limit**: Truncation of oversized tool outputs to prevent context window overflow.
     *   **Denied Action Tracking**: The session terminates if the model repeatedly requests forbidden actions.
+5.  **`done` Must Be Earned**: After changing files, the model may only call `done` once a check has *passed* since its last change. Otherwise `done` is refused and the model is told why (3 refusals in a row stop the run). With no changes, `done` is always allowed, so the model can still report that it could not fix the task.
 
 ---
 
