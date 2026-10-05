@@ -85,6 +85,8 @@ The project includes a comprehensive test suite in `tests/` that uses a `Scripte
 ```bash
 python -m pytest -q
 ```
+A full detailed log of the passing unit tests is provided in [tests/test_results.txt](tests/test_results.txt).
+
 **Coverage includes**:
 - ✅ **Tool Safety**: Verification that paths outside `--root` are rejected.
 - ✅ **Controller Logic**: Validation of the action loop and tool routing.
