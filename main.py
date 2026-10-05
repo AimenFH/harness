@@ -14,9 +14,9 @@ import argparse
 import sys
 from pathlib import Path
 
-from config import MODES, Config
+from config import MODES, SANDBOXES, Config, load_settings
 from controller import DONE, Controller
-from execution import ALLOWED_COMMANDS, ExecutionEnvironment
+from execution import ALLOWED_COMMANDS, DockerSandbox, ExecutionEnvironment, ExecutionError
 from model_client import ModelClient, ScriptedModelClient
 from repository_tools import RepositoryTools
 from verification import Verifier
@@ -79,6 +79,19 @@ def build_parser():
         help="Which whitelisted test command run_check and verification use "
              "(default: unittest).",
     )
+    parser.add_argument(
+        "--sandbox",
+        choices=SANDBOXES,
+        default=None,  # None: use the settings file, else "docker"
+        help="Where checks run. docker (default): a container with no network that only "
+             "sees the repository. none: directly on this machine (NOT contained).",
+    )
+    parser.add_argument(
+        "--settings",
+        metavar="FILE",
+        help="TOML file with limits, timeouts and sandbox settings "
+             "(see settings.example.toml).",
+    )
     return parser
 
 
@@ -119,6 +132,15 @@ def parse_config(argv=None):
         if not target.is_file():
             parser.error(f"--file is not a file: {path}")
 
+    settings = {}
+    if args.settings:
+        try:
+            settings = load_settings(args.settings)
+        except ValueError as error:
+            parser.error(str(error))
+    if args.sandbox:  # the command line wins over the settings file
+        settings["sandbox"] = args.sandbox
+
     return Config(
         root=root,
         task=task,
@@ -128,6 +150,7 @@ def parse_config(argv=None):
         context_files=tuple(args.files),
         check_command=args.check,
         final_checks=(args.check,),
+        **settings,
     )
 
 
@@ -136,6 +159,13 @@ def build_model(config):
     if config.offline:
         return ScriptedModelClient(OFFLINE_SCRIPT)
     return ModelClient(config.ollama_settings())
+
+
+def build_sandbox(config):
+    """Return the sandbox checks run in, or None for --sandbox none."""
+    if config.sandbox == "none":
+        return None
+    return DockerSandbox(config.sandbox_image)
 
 
 def section(title, body=None):
@@ -163,19 +193,28 @@ def summary_text(run, verification):
 def main(argv=None):
     """Run the CLI. Returns the process exit code (0 = success)."""
     config = parse_config(argv)
+    sandbox = build_sandbox(config)
+    if sandbox:
+        try:
+            sandbox.check()  # fail now, not after the model has worked for minutes
+        except ExecutionError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 2
     section("Task", config.summary())
 
     controller = Controller(
         config=config,
         model=build_model(config),
         tools=RepositoryTools(config.root, config.mode),
-        executor=ExecutionEnvironment(config.root, config.command_timeout_seconds),
+        executor=ExecutionEnvironment(config.root, config.command_timeout_seconds,
+                                      sandbox=sandbox),
     )
     section("Progress")
     run = controller.run(config.task, config.context_files)
 
     # Verification runs no matter what the model said.
-    verifier = Verifier(config.root, config.final_checks, config.command_timeout_seconds)
+    verifier = Verifier(config.root, config.final_checks, config.command_timeout_seconds,
+                        sandbox=sandbox)
     verification = verifier.verify()
 
     section("Changed Files", verification.changed_files_text())

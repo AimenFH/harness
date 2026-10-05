@@ -59,9 +59,10 @@ Failed: allocate(qty=-5) was accepted: available stock 10 -> 15, committed=True
 ## One-time setup
 
 ```bash
-cd coding-harness
+cd harness
 source .venv/bin/activate
-pip install -r requirements.txt -r demo/requirements-target.txt
+pip install -r requirements.txt
+docker build -t harness-sandbox -f sandbox/Dockerfile .   # target's packages go into the image
 ollama pull qwen2.5-coder:7b  # or the model you will use
 python demo/demo.py prepare   # clones once into ~/harness-demo, then makes a fresh copy
 python demo/demo.py rehearse  # optional: full harness run with a SCRIPTED model (no Ollama)
@@ -69,8 +70,11 @@ python demo/demo.py prepare   # reset after the rehearsal
 ```
 
 `prepare` always makes a fresh copy at the pinned commit and removes the git remote,
-so nothing can be pushed from it. The harness's checks run with the harness's Python,
-which is why the target's packages go into the same virtual environment.
+so nothing can be pushed from it. The harness's checks, the acceptance check and the
+regression tests all run in the Docker sandbox (read-only copy, no network), which is
+why the target's packages go into the sandbox image. Without Docker, add `--sandbox none`
+to the harness and to `demo.py`, and install `demo/requirements-target.txt` into the
+virtual environment instead; the checks are then NOT contained.
 
 ## 4-minute demo script
 
@@ -110,6 +114,7 @@ action limit), run `python demo/demo.py prepare` for a clean copy and try again.
 
 ## Manual help to declare in the demo
 
-- The target's dependencies (`SQLAlchemy<2`) were installed by hand.
+- The target's dependencies (`SQLAlchemy<2`) are installed into the sandbox image by hand
+  (`demo/requirements-target.txt`).
 - The e2e tests are excluded with `PYTEST_ADDOPTS`.
 - If the model needed more than one attempt, say so (and how many).

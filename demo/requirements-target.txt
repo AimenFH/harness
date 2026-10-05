@@ -1,6 +1,7 @@
 # Extra packages the demo target (Cosmic Python, chapter 5) needs.
-# Install them into the SAME virtual environment as the harness, because
-# the harness runs the target's tests with its own Python interpreter.
+# sandbox/Dockerfile installs them into the sandbox image. With
+# --sandbox none, install them into the harness's virtual environment
+# instead, because the checks then run with the harness's own Python.
 pytest
 requests
 SQLAlchemy>=1.4,<2   # the target uses sqlalchemy.orm.mapper, removed in 2.0

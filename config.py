@@ -3,13 +3,20 @@
 Keeping settings here means other modules do not hard-code values.
 """
 
-from dataclasses import dataclass
+import tomllib
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 # The two ways the harness may operate on a repository.
 #   readonly: the model may list, read and search files and run checks; edit_file is denied.
 #   edit:     the model may also change files inside the repository root.
 MODES = ("readonly", "edit")
+
+# Where repository code (checks and tests) runs.
+#   docker: inside a throwaway container with no network and no host files.
+#   none:   directly on this machine. NOT contained; only for when Docker is unavailable.
+SANDBOXES = ("docker", "none")
+DEFAULT_SANDBOX_IMAGE = "harness-sandbox"
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
@@ -65,6 +72,9 @@ class Config:
     max_retries: int = MAX_RETRIES
     max_output_chars: int = MAX_OUTPUT_CHARS
 
+    sandbox: str = "docker"
+    sandbox_image: str = DEFAULT_SANDBOX_IMAGE
+
     def ollama_settings(self):
         """Return just the settings ModelClient needs."""
         return OllamaSettings(
@@ -83,5 +93,47 @@ class Config:
             f"Model:   {self.model}",
             f"Offline: {'yes' if self.offline else 'no'}",
             f"Files:   {', '.join(self.context_files) or '(none selected)'}",
+            f"Sandbox: {self.sandbox_text()}",
         ]
         return "\n".join(lines)
+
+    def sandbox_text(self):
+        if self.sandbox == "none":
+            return "none (checks run directly on this machine, NOT contained)"
+        return f"{self.sandbox} (image {self.sandbox_image})"
+
+
+# Settings a settings file may change (see settings.example.toml).
+# Everything else comes from the command line.
+SETTINGS_KEYS = ("ollama_url", "model_timeout_seconds", "num_ctx", "command_timeout_seconds",
+                 "max_actions", "max_retries", "max_output_chars", "sandbox", "sandbox_image")
+
+
+def load_settings(path):
+    """Read a TOML settings file and return {setting: value}.
+
+    Raises ValueError with a readable message for a missing file, bad TOML,
+    an unknown setting, or a value of the wrong type.
+    """
+    try:
+        with open(path, "rb") as file:
+            data = tomllib.load(file)
+    except OSError as error:
+        raise ValueError(f"cannot read settings file {path}: {error.strerror}") from None
+    except tomllib.TOMLDecodeError as error:
+        raise ValueError(f"settings file {path} is not valid TOML: {error}") from None
+
+    types = {f.name: f.type for f in fields(Config)}
+    for key, value in data.items():
+        if key not in SETTINGS_KEYS:
+            raise ValueError(f"unknown setting {key!r} in {path}. "
+                             f"Allowed: {', '.join(SETTINGS_KEYS)}")
+        expected = types[key]
+        if expected is int:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"setting {key!r} must be a whole number above 0")
+        elif not isinstance(value, str) or not value.strip():
+            raise ValueError(f"setting {key!r} must be a non-empty text")
+    if "sandbox" in data and data["sandbox"] not in SANDBOXES:
+        raise ValueError(f"setting 'sandbox' must be one of {', '.join(SANDBOXES)}")
+    return data

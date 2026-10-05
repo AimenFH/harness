@@ -7,7 +7,9 @@
     python demo/demo.py verify       # acceptance + regression + scope together
     python demo/demo.py rehearse     # full harness run with a SCRIPTED model (no Ollama)
 
-All commands run without a shell, with a timeout, inside the copy.
+All commands run without a shell, with a timeout, inside the copy. The
+acceptance and regression tests run in the same Docker sandbox as the
+harness's checks; add --sandbox none to run them directly on this machine.
 """
 
 import argparse
@@ -27,6 +29,8 @@ ALLOWED_FILES = {"service_layer/services.py", "domain/model.py"}
 # Existing tests that need no web server or Postgres.
 REGRESSION_TESTS = ["tests/unit", "tests/integration"]
 
+TEST_TIMEOUT = 120  # seconds, for the acceptance and regression runs
+
 DEMO_DIR = Path(__file__).resolve().parent
 HARNESS_DIR = DEMO_DIR.parent
 ACCEPTANCE = DEMO_DIR / "acceptance" / "acceptance_allocation_quantity.py"
@@ -37,7 +41,16 @@ CACHE = WORKSPACE / "cache"                # pristine clone, so resets work offl
 TARGET = WORKSPACE / "cosmic"              # the disposable copy the agent works on
 
 sys.path.insert(0, str(HARNESS_DIR))
-from execution import command_env  # noqa: E402  (same reduced environment as the harness)
+# noqa: E402 below: these imports need the sys.path line above.
+from config import DEFAULT_SANDBOX_IMAGE  # noqa: E402
+from execution import (PYTHON, DockerSandbox, ExecutionEnvironment, ExecutionError,  # noqa: E402
+                       command_env)
+
+# Where the acceptance folder appears inside the sandbox container.
+ACCEPTANCE_IN_SANDBOX = "/acceptance"
+
+# Set from --sandbox in the __main__ block: "docker" or "none".
+SANDBOX = "docker"
 
 
 def run(command, cwd, timeout=120):
@@ -85,19 +98,45 @@ def prepare():
     print(f"Copy:       {TARGET}")
 
 
+def run_tests(pytest_args, mounts=()):
+    """Run pytest in the copy, in the sandbox unless SANDBOX is "none".
+
+    Uses the harness's ExecutionEnvironment, so the same timeout, process
+    cleanup and (with Docker) the same container limits apply.
+    """
+    sandbox = None
+    if SANDBOX == "docker":
+        sandbox = DockerSandbox(DEFAULT_SANDBOX_IMAGE, mounts=mounts)
+        try:
+            sandbox.check()
+        except ExecutionError as error:
+            sys.exit(f"error: {error}")
+    command = [PYTHON, "-m", "pytest", "-p", "no:cacheprovider", *pytest_args]
+    env = ExecutionEnvironment(TARGET, TEST_TIMEOUT, {"tests": command}, sandbox=sandbox)
+    result = env.run("tests")
+    print(f"Sandbox: {result.sandbox or 'none (ran directly on this machine)'}")
+    output = (result.stdout + result.stderr).rstrip()
+    if result.timed_out:
+        output += f"\nTIMED OUT after {TEST_TIMEOUT}s"
+    return result.exit_code, output
+
+
 def acceptance():
     banner("Acceptance check (outside the agent's writable area)")
     print(f"File: {ACCEPTANCE}")
-    code, output = run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                        "-q", "--tb=line", "--rootdir", str(ACCEPTANCE.parent),
-                        str(ACCEPTANCE)], cwd=TARGET)
+    if SANDBOX == "docker":
+        folder = ACCEPTANCE_IN_SANDBOX  # mounted read-only next to the copy
+        mounts = [(ACCEPTANCE.parent, ACCEPTANCE_IN_SANDBOX)]
+    else:
+        folder, mounts = str(ACCEPTANCE.parent), []
+    code, output = run_tests(["-q", "--tb=line", "--rootdir", folder,
+                              f"{folder}/{ACCEPTANCE.name}"], mounts)
     return report(code, output)
 
 
 def regression():
     banner("Regression tests (existing tests in the target)")
-    code, output = run([sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
-                        "-q", "--tb=short", *REGRESSION_TESTS], cwd=TARGET)
+    code, output = run_tests(["-q", "--tb=short", *REGRESSION_TESTS])
     return report(code, output)
 
 
@@ -151,7 +190,7 @@ def rehearse():
     main.build_model = lambda config: ScriptedModelClient(script)
     os.environ["PYTEST_ADDOPTS"] = "--ignore=tests/e2e"
     return main.main(["--root", str(TARGET), "--task", TASK, "--mode", "edit",
-                      "--model", "scripted", "--check", "pytest"]) == 0
+                      "--model", "scripted", "--check", "pytest", "--sandbox", SANDBOX]) == 0
 
 
 def report(code, output):
@@ -168,5 +207,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=COMMANDS)
-    result = COMMANDS[parser.parse_args().command]()
+    parser.add_argument("--sandbox", choices=["docker", "none"], default="docker",
+                        help="where the acceptance and regression tests run (default: docker)")
+    args = parser.parse_args()
+    SANDBOX = args.sandbox
+    result = COMMANDS[args.command]()
     sys.exit(0 if result in (None, True) else 1)

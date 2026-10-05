@@ -107,7 +107,7 @@ def test_bug_fix_flow(setup, monkeypatch, capsys):
     ]
     monkeypatch.setattr(main, "build_model", lambda config: ScriptedModelClient(replies))
     exit_code = main.main(["--root", str(root), "--task", "Apply the order discount",
-                           "--mode", "edit", "--model", "scripted"])
+                           "--mode", "edit", "--model", "scripted", "--sandbox", "none"])
     report = capsys.readouterr().out
 
     assert "denied: Access denied: '../acceptance/acceptance_discount.py' is outside" in report

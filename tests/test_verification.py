@@ -117,7 +117,7 @@ def test_only_changes_inside_root_are_reported(tmp_path):
 def run_main(monkeypatch, capsys, repo, replies):
     monkeypatch.setattr(main, "build_model", lambda config: ScriptedModelClient(replies))
     exit_code = main.main(["--root", str(repo), "--task", "Fix it",
-                           "--mode", "edit", "--model", "fake"])
+                           "--mode", "edit", "--model", "fake", "--sandbox", "none"])
     return exit_code, capsys.readouterr().out
 
 

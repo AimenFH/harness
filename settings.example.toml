@@ -1,0 +1,22 @@
+# Example settings for the coding harness. All values below are the defaults.
+#
+#     cp settings.example.toml settings.toml
+#     python main.py --settings settings.toml ...
+#
+# No secrets are needed: the model runs locally in Ollama, so there is no API
+# key or account. settings.toml is git-ignored anyway.
+
+# Ollama
+ollama_url = "http://localhost:11434"
+model_timeout_seconds = 300   # local models can be slow, especially the first call
+num_ctx = 16384               # context window in tokens
+
+# Limits
+max_actions = 20              # model replies per run
+max_retries = 3               # malformed or denied requests in a row before stopping
+max_output_chars = 10000      # longer tool output is cut and marked [OUTPUT TRUNCATED]
+command_timeout_seconds = 30  # per check; the check and all its processes are then killed
+
+# Where checks run: "docker" (contained) or "none" (directly on this machine, NOT contained)
+sandbox = "docker"
+sandbox_image = "harness-sandbox"
