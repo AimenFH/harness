@@ -94,7 +94,7 @@ python -m pytest -q
 ### Real-World Demo
 The `demo/` folder contains a proof-of-concept fix for the **Cosmic Python** repository:
 1.  **Reproduction**: An external acceptance check (`demo/acceptance/`) proves the bug exists.
-2.  **Fix**: The harness is run with a real model to identify and fix the bug.
+2.  **Fix**: The harness is run with a real model to identify and fix the bug. A full log of this successful execution is provided in [demo/demo_output.txt](demo/demo_output.txt).
 3.  **Verification**: The `demo/demo.py verify` command confirms that the acceptance check now passes and no regressions were introduced.
 
 ---
