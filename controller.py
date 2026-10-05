@@ -130,6 +130,7 @@ class Controller:
         self.changed_files = []
         self.last_check = None
         self.partly_read = set()  # files the model has only seen truncated
+        self.checked_since_edit = False  # a check PASSED after the last file change
         rejected_in_a_row = 0
         messages = initial_messages(task, self.config.mode, self._check_names(),
                                     self.selected_files_text(context_files))
@@ -163,12 +164,16 @@ class Controller:
                 self.log(f"[{step}] {describe(action)}")
                 messages.append({"role": "assistant", "content": action.raw or _as_json(action)})
 
-                # 2. Finished?
+                # 2. Finished? Only if the change has been checked.
                 if action.tool == "done":
-                    return self._stop(DONE, action.summary or "(no summary given)", quiet=True)
-
-                # 3. Validate and run the tool, 4. send the result back.
-                outcome, text = self.execute(action)
+                    problem = self.done_problem()
+                    if not problem:
+                        return self._stop(DONE, action.summary or "(no summary given)",
+                                          quiet=True)
+                    outcome, text = self._deny(problem)
+                else:
+                    # 3. Validate and run the tool, 4. send the result back.
+                    outcome, text = self.execute(action)
                 messages.append({"role": "user", "content": text})
                 rejected_in_a_row = rejected_in_a_row + 1 if outcome == DENIED else 0
 
@@ -207,6 +212,21 @@ class Controller:
         return "\n\n".join(parts)
 
     # ----- validation and dispatch -------------------------------------------
+
+    def done_problem(self):
+        """Return a reason if the model may not finish yet, otherwise None.
+
+        After changing files, the model must run a check that passes before
+        it calls done. Without changes (e.g. readonly mode) done is always
+        allowed, so the model can still report that it could not fix the task.
+        """
+        if not self.changed_files or self.checked_since_edit:
+            return None
+        if self.last_check is None:
+            return ("Not finished: you changed files but have not run a check. "
+                    "Call run_check before done.")
+        return (f"Not finished: the last check {self.last_check.status()}. "
+                "Fix the problem and run the check again before done.")
 
     def check_permission(self, action):
         """Return a reason if `action` must be refused, otherwise None."""
@@ -299,12 +319,14 @@ class Controller:
         return message
 
     def _record_change(self, path):
+        self.checked_since_edit = False  # the old check result no longer counts
         if path not in self.changed_files:
             self.changed_files.append(path)
 
     def _run_check(self, name=None):
         result = self.executor.run(name or self.config.check_command)
         self.last_check = result  # keeps the FULL output, even if truncated below
+        self.checked_since_edit = result.succeeded
         self.log(f"    {result.status()}")
         return result.report()
 

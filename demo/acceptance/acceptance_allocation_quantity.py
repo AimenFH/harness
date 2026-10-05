@@ -52,13 +52,30 @@ def make_batch(qty=10):
     return batch, FakeRepository([batch])
 
 
+def assert_rejected(qty, batch, repo, session):
+    """Call allocate with a bad qty; it must raise InvalidQuantity.
+
+    If it is accepted instead, the failure message shows the actual bug
+    (stock and commit state), not just that the exception is missing.
+    """
+    stock_before = batch.available_quantity
+    try:
+        services.allocate("order-1", "LAMP", qty, repo, session)
+    except Exception as error:
+        assert isinstance(error, invalid_quantity_error()), (
+            f"expected InvalidQuantity, got {type(error).__name__}: {error}")
+    else:
+        pytest.fail(f"allocate(qty={qty}) was accepted: available stock "
+                    f"{stock_before} -> {batch.available_quantity}, "
+                    f"committed={session.committed}")
+
+
 @pytest.mark.parametrize("bad_qty", [0, -5])
 def test_non_positive_quantity_is_rejected(bad_qty):
     batch, repo = make_batch()
     session = FakeSession()
 
-    with pytest.raises(invalid_quantity_error()):
-        services.allocate("order-1", "LAMP", bad_qty, repo, session)
+    assert_rejected(bad_qty, batch, repo, session)
 
     assert batch.available_quantity == 10, "stock must not change"
     assert session.committed is False, "nothing may be committed"
@@ -67,8 +84,7 @@ def test_non_positive_quantity_is_rejected(bad_qty):
 def test_negative_quantity_cannot_be_used_to_overallocate():
     batch, repo = make_batch(qty=10)
 
-    with pytest.raises(invalid_quantity_error()):
-        services.allocate("order-1", "LAMP", -5, repo, FakeSession())
+    assert_rejected(-5, batch, repo, FakeSession())
 
     # Only 10 units exist, so an order for 15 must still be out of stock.
     with pytest.raises(model.OutOfStock):

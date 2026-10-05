@@ -73,8 +73,11 @@ TOOL_HELP = {
                         "file (same spaces) and appear only once. Preferred way to edit"),
     "edit_file": ('{"path": "src/app.py", "content": "<full new file>"}',
                   "replace the WHOLE file; only use it to create a new file"),
-    "run_check": ('{"name": "unittest"}',
-                  'run tests ("name" is optional, default: {default}). Available: {checks}'),
+    # The example has no "name": small models copy examples literally, and a
+    # hard-coded name would make them run that check instead of the default.
+    "run_check": ("{}",
+                  'run the tests ({default}). Leave "arguments" empty unless the task '
+                  'asks for another check. Available: {checks}'),
     "done": ("{}", 'finish; put your "summary" next to "arguments"'),
 }
 
