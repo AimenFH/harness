@@ -510,7 +510,7 @@ def test_another_process_cancels_a_running_task(tmp_path):
         "    {'tool': 'edit_file', 'arguments': {'path': 'hello.py', 'content': 'OWNED = 1\\n'}},\n"
         "])\n"
         f"sys.exit(m.main(['--root', {str(root)!r}, '--task', 'block', '--mode', 'edit',\n"
-        f"    '--model', 'scripted', '--sandbox', 'none', '--session-dir', {str(sessions)!r},\n"
+        f"    '--model', 'scripted', '--sandbox', 'docker', '--session-dir', {str(sessions)!r},\n"
         "    '--allow', 'hello.py']))\n"
     )
 
