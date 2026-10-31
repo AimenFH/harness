@@ -51,6 +51,7 @@ User CLI ──> Agent Controller <──> LLM (Ollama)
 | `controller.py` | **Orchestration** | The agentic loop: Request $\rightarrow$ Validate $\rightarrow$ Execute $\rightarrow$ Return. |
 | `model_client.py` | **LLM Bridge** | Integration with Ollama; handles system prompting and JSON parsing. |
 | `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`. |
+| `navigation.py` | **Navigation** | Read-only, language-aware tools: `find_files`, `list_symbols`, `find_symbol` (AST-based, never runs code), `module_dependencies` (imports and importers), `git_state` (branch, commit, changed/untracked files). |
 | `execution.py` | **Environment** | Whitelisted test commands (pytest/unittest), run in a Docker sandbox (`DockerSandbox`) with timeouts and process cleanup. |
 | `verification.py` | **Validation** | Final check of resulting code via `git diff` and test suites. |
 | `config.py` | **Settings** | Centralized management of limits, timeouts, and defaults; loads `--settings` files. |
