@@ -6,7 +6,7 @@ This file records each phase: what was checked or built, test results, and open 
 | Phase | Topic | Status |
 |---|---|---|
 | 1 | Baseline, architecture review, requirement checklist, proposal | **done** |
-| 2 | Navigation (symbols, dependencies, Git state) | planned |
+| 2 | Navigation (symbols, dependencies, Git state) | **done** |
 | 3 | Context management (repo map, file selection, bounded history) | planned |
 | 4 | Task record, scope enforcement, session store, checkpoints | planned |
 | 5 | Cancellation (model request + command) | planned |
@@ -228,3 +228,74 @@ Cosmic Python `chapter_05_high_gear_low_gear` @ `97267473` — the brief's own e
 2. **Starting code**: the original commit `97267473` (recommended, clean history) or the Stage 1 fix applied first?
 3. **Model**: keep `qwen2.5-coder:7b` (Stage 1, proven) or try the brief's suggested Qwen 3.x for the real run.
 4. **Where the work lives**: this phase ran in a cloud container, not on the Mac. Files here are lost when the container is reclaimed unless they are pushed to the branch or copied out.
+
+---
+
+## Phase 2 — Repository navigation (2026-10-31)
+
+Requirements covered: **N1, N2, N3, N4** (and P4 for git: read-only commands only). Test: **TN**.
+
+### What was built
+
+New module `navigation.py` with `RepositoryNavigator`, used by the controller and offered to
+the model as five read-only tools (allowed in `readonly` and `edit` mode):
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `find_files` | `pattern`, optional `path` | Files whose path contains the text (case-insensitive), match a glob (`tests/test_*.py`), or a dotted module name (`service_layer.services`). Python files show their module name. |
+| `list_symbols` | `path` | Every class, function, method and property in one Python file: `path:start-end kind Qualified.name(signature)`. Includes nested classes/functions and definitions inside `if`/`try` blocks (e.g. `if TYPE_CHECKING:`). |
+| `find_symbol` | `name`, optional `path` | Definitions of a plain name (`allocate`: all of them) or a qualified one (`Batch.allocate`). |
+| `module_dependencies` | `path` | The module's static imports split into repository-internal (with the file each resolves to) and external, plus the repository modules that import it. Handles `import a.b`, `from a import b` (submodule or name), relative imports (`from . import x`, `from ..x import y`), imports inside functions, and a `src/` layout. |
+| `git_state` | none | Branch (or detached HEAD), commit (or "no commits yet"), changed files with their two-letter status, untracked files. Paths relative to `--root`, also when it is a subfolder of a bigger repository. |
+
+### Design decisions
+
+- **Parse, never run.** Python files are analysed with `ast.parse`. Repository code is never imported or executed (tested with a file that would write a marker file if it ran).
+- **Same restrictions as `read_file`.** Every file goes through `RepositoryTools.list_files` / `read_file`, so the root boundary, symlink check, `.git` protection, 1 MB size limit and UTF-8 check apply unchanged. The controller's existing `check_permission` also validates every `path` argument before the tool runs, so a request outside the root is **denied** (counts towards the retry limit) and never reaches the file tools.
+- **Errors are reported, not fatal.** Invalid syntax, null bytes, non-UTF-8, non-Python files, missing files, missing symbols, invalid symbol names, not-a-git-repository and a missing `git` program become a `RepositoryError`: the model gets `ERROR: ...` (a tool error, which does not count towards the retry limit) and the loop continues. Repository-wide tools skip unparsable files and list them as `skipped: ...` so nothing is silently hidden.
+- **Output limits.** Navigation lists are cut to 200 entries with a "... N more not shown" line; after that, the controller's existing `max_output_chars` truncation applies as for every tool.
+- **Read-only Git.** `git_state` can only run four fixed commands (`symbolic-ref`, `rev-parse` ×2, `status --porcelain=v1 -z`), through an `ExecutionEnvironment` whitelist (no shell, filtered environment, timeout, process-group kill). Flags: `--no-pager`, `-c core.fsmonitor=false` (a repository cannot make git start a helper program), and `--no-optional-locks` so even `git status` does not rewrite `.git/index`. Git runs on the host, like verification: it is the harness's own tool, not repository code. No command can change branches, commit, push or touch remotes.
+- **Prompt.** The system prompt lists the new tools and adds one rule: locate code with `find_symbol` / `find_files` / `module_dependencies` before reading whole files.
+
+### Files
+
+| File | Change |
+|---|---|
+| `navigation.py` | **new** — `RepositoryNavigator`, `module_name`, `parse_porcelain`, `git_state_commands` |
+| `controller.py` | builds a `RepositoryNavigator` from the same `RepositoryTools` (or takes one); five new handlers; progress line shows `pattern`/`name` |
+| `model_client.py` | tool schemas + help text for the five tools, `NAVIGATION_TOOLS`, one new prompt rule |
+| `tests/test_navigation.py` | **new** — 56 tests |
+| `README.md` | module table: `navigation.py` |
+
+### Tests (`tests/test_navigation.py`, 56 tests)
+
+| Area | What is checked |
+|---|---|
+| Files/modules | substring, glob, dotted module name, inside a folder, case-insensitive, no match, empty pattern, `module_name` rules |
+| Symbols | classes, functions, methods, properties, async, nested classes/functions, `if TYPE_CHECKING:` definitions, line ranges and signatures; plain vs qualified names; folder filter; `src/` layout |
+| Dependencies | absolute, `from pkg import module`, `from module import name`, relative (`.`/`..`), alias, import inside a function, external vs internal, reverse "imported by", relative import above the root, `src/` layout |
+| Errors | syntax error (single file → error; repository-wide → skipped and reported), null bytes, non-UTF-8, non-Python, missing file, missing symbol, invalid symbol names, parsing never runs code |
+| Permissions | `..`, absolute paths, `path=".."`, `.git` contents, symlink to a file outside (denied, content not leaked), result list limit |
+| Git state | clean repo with branch + commit, modified/staged/deleted/renamed/untracked (incl. a space in a name), root inside a bigger repository, detached HEAD, no commits yet, not a git repo, git missing, `.git/index` unchanged (read-only), `core.fsmonitor` helper not run, porcelain parsing |
+| Controller | tools listed in the prompt in both modes; scripted model navigates (log lines + results sent back); outside-root requests denied before any file tool runs; navigation errors are tool errors and don't hit the retry limit; bad arguments rejected; output truncated by `max_output_chars`; readonly mode allowed and the working tree stays clean; injected navigator is used |
+
+### Results
+
+```
+python -m pytest -q tests/test_navigation.py   ->  56 passed
+python -m pytest -q                            ->  208 passed (152 Stage 1 + 56 new), 0 skipped, Docker tests included
+demo.py rehearse + verify (Stage 1 demo)       ->  SUCCESS; acceptance / regression / scope PASS
+ruff --select F,E9,B,BLE,I on the new files    ->  clean
+```
+
+Smoke test on the real target (Cosmic Python @ `97267473`, parsing only):
+`find_symbol allocate` → `domain/model.py` function + `Batch.allocate` method + `service_layer/services.py`;
+`module_dependencies service_layer/services.py` → imports `domain/model.py`, `adapters/repository.py`;
+imported by `entrypoints/flask_app.py`, `tests/unit/test_services.py`; `git_state` → detached HEAD at `97267473`, clean.
+
+### Known limits
+
+- Python only (the brief allows simple language-aware tools). Other files are still reachable with `find_files`, `read_file` and `search`.
+- Static analysis: dynamic imports (`importlib.import_module("x")`, `__import__`) and names created at run time are not found.
+- `find_symbol` finds definitions, not every use of a name; use `search` (text) or `module_dependencies` (imports) for uses.
+- `git_state` does not yet compare against the task's starting commit; that comes with the task record (Phase 4).

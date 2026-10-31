@@ -23,6 +23,11 @@ TOOLS = {
     "list_files": {"path": False},
     "read_file": {"path": True},
     "search": {"query": True, "path": False},
+    "find_files": {"pattern": True, "path": False},
+    "list_symbols": {"path": True},
+    "find_symbol": {"name": True, "path": False},
+    "module_dependencies": {"path": True},
+    "git_state": {},
     "replace_in_file": {"path": True, "old": True, "new": True},
     "edit_file": {"path": True, "content": True},
     "run_check": {"name": False},
@@ -32,6 +37,10 @@ TOOLS = {
 
 # Tools that change files: offered and allowed only in edit mode.
 EDIT_TOOLS = ("replace_in_file", "edit_file")
+
+# Read-only navigation tools (navigation.py): allowed in every mode.
+NAVIGATION_TOOLS = ("find_files", "list_symbols", "find_symbol", "module_dependencies",
+                    "git_state")
 
 
 class ModelError(Exception):
@@ -67,6 +76,18 @@ TOOL_HELP = {
     "read_file": ('{"path": "src/app.py"}', "read one file"),
     "search": ('{"query": "total", "path": "."}',
                'find lines containing this exact text ("path" is optional)'),
+    "find_files": ('{"pattern": "services"}',
+                   "find files/modules by part of their path, a glob like \"tests/test_*.py\", "
+                   "or a module name like \"service_layer.services\""),
+    "list_symbols": ('{"path": "src/app.py"}',
+                     "list the classes, functions and methods in one Python file, with line "
+                     "numbers"),
+    "find_symbol": ('{"name": "allocate"}',
+                    'find where a class, function or method is defined; "Batch.allocate" '
+                    "finds one method"),
+    "module_dependencies": ('{"path": "src/app.py"}',
+                            "show what a Python module imports and which modules import it"),
+    "git_state": ("{}", "show the Git branch, commit, and changed or untracked files"),
     "replace_in_file": ('{"path": "src/app.py", "old": "<exact lines to change>", '
                         '"new": "<replacement lines>"}',
                         'change part of a file: "old" must be copied EXACTLY from the '
@@ -87,6 +108,8 @@ COMMON_RULES = [
     "Never pretend you have read a file or seen output. If you need to know "
     "what a file contains, call read_file. Base every statement on tool results.",
     "Request exactly one action per reply, then wait for its result.",
+    "To find code, use find_symbol, find_files and module_dependencies before "
+    "reading whole files. A change to a function can affect the modules that import it.",
 ]
 
 EDIT_RULES = [

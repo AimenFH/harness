@@ -21,6 +21,7 @@ from typing import Optional
 from execution import CommandResult, ExecutionError
 from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_messages,
                           validate_tool_call)
+from navigation import RepositoryNavigator
 from repository_tools import AccessDeniedError, RepositoryError
 
 # Possible values of RunResult.status
@@ -91,19 +92,23 @@ class RunResult:
 class Controller:
     """Runs the loop between the model and the tools."""
 
-    def __init__(self, config, model, tools, executor, log=print):
+    def __init__(self, config, model, tools, executor, log=print, navigator=None):
         """
-        config:   Config (mode, limits, check_command)
-        model:    anything with request_action(messages) -> Action
-        tools:    RepositoryTools for the target repository
-        executor: ExecutionEnvironment for the target repository
-        log:      function used for progress lines (print by default)
+        config:    Config (mode, limits, check_command)
+        model:     anything with request_action(messages) -> Action
+        tools:     RepositoryTools for the target repository
+        executor:  ExecutionEnvironment for the target repository
+        log:       function used for progress lines (print by default)
+        navigator: RepositoryNavigator; by default one built on `tools`, so
+                   navigation has exactly the same path restrictions
         """
         self.config = config
         self.model = model
         self.tools = tools
         self.executor = executor
         self.log = log
+        self.navigator = navigator or RepositoryNavigator(
+            tools, timeout_seconds=config.command_timeout_seconds)
 
         if config.check_command not in executor.available_commands():
             raise ValueError(f"Unknown check_command {config.check_command!r}")
@@ -113,6 +118,11 @@ class Controller:
             "list_files": self._list_files,
             "read_file": self._read_file,
             "search": self._search,
+            "find_files": self._find_files,
+            "list_symbols": self._list_symbols,
+            "find_symbol": self._find_symbol,
+            "module_dependencies": self._module_dependencies,
+            "git_state": self._git_state,
             "replace_in_file": self._replace_in_file,
             "edit_file": self._edit_file,
             "run_check": self._run_check,
@@ -307,6 +317,23 @@ class Controller:
             return f"No matches for {query!r}"
         return f"{len(matches)} match(es):\n" + "\n".join(matches)
 
+    # Navigation (read-only). Errors are RepositoryErrors: reported, never fatal.
+
+    def _find_files(self, pattern, path="."):
+        return "\n".join(self.navigator.find_files(pattern, path))
+
+    def _list_symbols(self, path):
+        return f"Symbols in {path}:\n" + "\n".join(self.navigator.list_symbols(path))
+
+    def _find_symbol(self, name, path="."):
+        return f"Definitions of {name!r}:\n" + "\n".join(self.navigator.find_symbol(name, path))
+
+    def _module_dependencies(self, path):
+        return "\n".join(self.navigator.module_dependencies(path))
+
+    def _git_state(self):
+        return "\n".join(self.navigator.git_state())
+
     def _replace_in_file(self, path, old, new):
         message = self.tools.replace_in_file(path, old, new)
         self._record_change(path)
@@ -362,7 +389,8 @@ def truncate(text, limit):
 def describe(action):
     """One-line description for progress output, e.g. 'read_file orders/pricing.py'."""
     args = action.arguments
-    detail = args.get("query") or args.get("path") or args.get("name") or ""
+    detail = (args.get("query") or args.get("pattern") or args.get("name")
+              or args.get("path") or "")
     return f"{action.tool} {detail}".strip()
 
 
