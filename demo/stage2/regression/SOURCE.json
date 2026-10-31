@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/cosmicpython/code.git",
+  "commit": "97267473c8accfd998bb9f756034eac48fa154f6",
+  "expected_tests": 24,
+  "sha256": {
+    "tests/conftest.py": "1928c88fab3ab8ef02d779d48274899952c0eb6c466fafdbd4b6e320e4d51a35",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/unit/test_batches.py": "2a5008b4354743c332f581b0f0bcaaf35ef29c5fb8c11b107e675ee18b192d74",
+    "tests/unit/test_allocate.py": "587bf3a3329e1d267026bf4d43b0cbb2b4432992adfa00bb9074769997fee50b",
+    "tests/unit/test_services.py": "7db5f0e669135e3766ef2f615d71df69f72a77c9bedcbe8340a9dd31be0a2c55",
+    "tests/integration/test_orm.py": "60d32693a36218eed5cb95b0f60954514c3e6b26e7d41dfb46e184fcddfb01fa",
+    "tests/integration/test_repository.py": "656d16871351d084699661b2fb2ff52611a9b937bfce066b256ed1de2c32f07f"
+  }
+}

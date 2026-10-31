@@ -1,0 +1,33 @@
+Add optional expiry to stock reservations in Cosmic Python at starting commit
+97267473c8accfd998bb9f756034eac48fa154f6. Inspect the modules before editing.
+
+Compatibility and API contract:
+- Preserve existing services.allocate(orderid, sku, qty, repo, session) calls,
+  return values, SKU/stock errors, and legacy OrderLine(orderid, sku, qty) calls.
+- Add an optional expires_at=None to OrderLine and services.allocate. Add an
+  optional keyword now=None to services.allocate; None uses date.today(), while
+  a supplied date is the sole reference clock. Ordinary reservations never expire.
+- Use datetime.date values, not datetime.datetime timestamps, strings, booleans,
+  or numbers. A provided expiry must be strictly later than the reference now.
+  Raise services.InvalidExpiry with a clear expiry/now-related message for invalid
+  expiry or clock values, before allocation or session.commit mutates anything.
+- Batch.release_expired(now) removes reservations with expires_at <= now and
+  returns the number of reservations released (not their quantity).
+- services.release_expired(now, repo, session) releases expired reservations
+  across repo.list(), commits once, and returns the total reservation count.
+  The explicit now argument must be a date. Nothing reads the wall clock here.
+- Future and permanent reservations remain allocated. Released stock can be
+  reserved again. Repeating a release returns zero for previously released
+  reservations and must never inflate available stock or remove a new reservation.
+- Repeating an identical allocation keeps the existing idempotent behavior.
+- Persist optional expiry through the existing SQLAlchemy mapping; a new database
+  has a nullable date column for expiry, and legacy rows/calls without expiry work.
+  Reloaded reservations can be released, and release remains effective after reload.
+  Migrating an already-existing production database is outside this demonstration.
+
+Scope: change only domain/model.py, service_layer/services.py and adapters/orm.py.
+Keep tests, dependencies, entrypoints, configuration and Git metadata unchanged.
+The implementation must change at least two of those interacting modules. Do not
+copy acceptance tests into the target or replace them. No push, merge or deployment.
+Protected acceptance and original regression tests are outside the writable copy.
+Use the existing contained execution/check tools; test failures must remain visible.
