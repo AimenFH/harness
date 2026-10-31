@@ -1,0 +1,15 @@
+{
+  "TASK.txt": "b717e4cb45b855358d3c4ef68316a79b9c874aefa7da31b35e587a343245796f",
+  "run_checks.py": "f3826ea6ad48334bcd70b3109db6ce3e0b319c2ee0e4a85a5c2563e7cd31e02f",
+  "acceptance/acceptance_expiry.py": "ce721f87e9d71f6b81f10d402fbc3c02ea79e963d56e9fb76a5efbd21be6cd4c",
+  "regression/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "regression/tests/conftest.py": "1928c88fab3ab8ef02d779d48274899952c0eb6c466fafdbd4b6e320e4d51a35",
+  "regression/tests/integration/test_orm.py": "60d32693a36218eed5cb95b0f60954514c3e6b26e7d41dfb46e184fcddfb01fa",
+  "regression/tests/integration/test_repository.py": "656d16871351d084699661b2fb2ff52611a9b937bfce066b256ed1de2c32f07f",
+  "regression/tests/unit/test_allocate.py": "587bf3a3329e1d267026bf4d43b0cbb2b4432992adfa00bb9074769997fee50b",
+  "regression/tests/unit/test_batches.py": "2a5008b4354743c332f581b0f0bcaaf35ef29c5fb8c11b107e675ee18b192d74",
+  "regression/tests/unit/test_services.py": "7db5f0e669135e3766ef2f615d71df69f72a77c9bedcbe8340a9dd31be0a2c55",
+  "regression/SOURCE.json": "eb0c0f95564c6e4e352eabcf06475d8ed82215fccf2b1cc12123412308f47511",
+  "conftest.py": "1856ffe45a034636dc42ed849c22dc54dbd298d6116a843bde49fd538c204021",
+  "regression/LICENSE.cosmicpython": "1aa2387124c47ab728c0df6ad9b628fb0783ede816150adbeb166c2e9d49bdd2"
+}

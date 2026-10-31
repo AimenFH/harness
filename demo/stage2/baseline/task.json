@@ -1,0 +1,26 @@
+{
+  "request": "Add optional expiry to stock reservations in Cosmic Python at starting commit\n97267473c8accfd998bb9f756034eac48fa154f6. Inspect the modules before editing.\n\nCompatibility and API contract:\n- Preserve existing services.allocate(orderid, sku, qty, repo, session) calls,\n  return values, SKU/stock errors, and legacy OrderLine(orderid, sku, qty) calls.\n- Add an optional expires_at=None to OrderLine and services.allocate. Add an\n  optional keyword now=None to services.allocate; None uses date.today(), while\n  a supplied date is the sole reference clock. Ordinary reservations never expire.\n- Use datetime.date values, not datetime.datetime timestamps, strings, booleans,\n  or numbers. A provided expiry must be strictly later than the reference now.\n  Raise services.InvalidExpiry with a clear expiry/now-related message for invalid\n  expiry or clock values, before allocation or session.commit mutates anything.\n- Batch.release_expired(now) removes reservations with expires_at <= now and\n  returns the number of reservations released (not their quantity).\n- services.release_expired(now, repo, session) releases expired reservations\n  across repo.list(), commits once, and returns the total reservation count.\n  The explicit now argument must be a date. Nothing reads the wall clock here.\n- Future and permanent reservations remain allocated. Released stock can be\n  reserved again. Repeating a release returns zero for previously released\n  reservations and must never inflate available stock or remove a new reservation.\n- Repeating an identical allocation keeps the existing idempotent behavior.\n- Persist optional expiry through the existing SQLAlchemy mapping; a new database\n  has a nullable date column for expiry, and legacy rows/calls without expiry work.\n  Reloaded reservations can be released, and release remains effective after reload.\n  Migrating an already-existing production database is outside this demonstration.\n\nScope: change only domain/model.py, service_layer/services.py and adapters/orm.py.\nKeep tests, dependencies, entrypoints, configuration and Git metadata unchanged.\nThe implementation must change at least two of those interacting modules. Do not\ncopy acceptance tests into the target or replace them. No push, merge or deployment.\nProtected acceptance and original regression tests are outside the writable copy.\nUse the existing contained execution/check tools; test failures must remain visible.",
+  "project": "cosmic-expiry",
+  "root": "/Users/aymen/harness-demo/stage2/cosmic",
+  "starting_commit": "97267473c8accfd998bb9f756034eac48fa154f6",
+  "mode": "edit",
+  "allowed_changes": [
+    "domain/model.py",
+    "service_layer/services.py",
+    "adapters/orm.py"
+  ],
+  "checks": [
+    "pytest"
+  ],
+  "acceptance_commands": [
+    "/Users/aymen/Github/harness/.venv/bin/python /Users/aymen/Github/harness/demo/stage2.py acceptance --workspace /Users/aymen/harness-demo/stage2",
+    "/Users/aymen/Github/harness/.venv/bin/python /Users/aymen/Github/harness/demo/stage2.py regression --workspace /Users/aymen/harness-demo/stage2",
+    "/Users/aymen/Github/harness/.venv/bin/python /Users/aymen/Github/harness/demo/stage2.py scope --workspace /Users/aymen/harness-demo/stage2"
+  ],
+  "limits": {
+    "max_actions": 60,
+    "max_retries": 3,
+    "max_output_chars": 10000,
+    "command_timeout_seconds": 120
+  }
+}

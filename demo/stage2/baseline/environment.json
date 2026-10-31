@@ -1,0 +1,8 @@
+{
+  "image_id": "sha256:3d37d247edeed4121d8d71d1244e850d9c1024c5f7cff8ca049a3a1b346f20ac",
+  "target_head": "97267473c8accfd998bb9f756034eac48fa154f6",
+  "target_status": "",
+  "target_remotes": "",
+  "run_command": ".venv/bin/python demo/stage2.py baseline",
+  "feature_code_implemented": false
+}
