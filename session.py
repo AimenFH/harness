@@ -47,6 +47,7 @@ import os
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -125,6 +126,8 @@ class Checkpoint:
 
     @classmethod
     def from_dict(cls, data):
+        if not isinstance(data, dict):
+            raise SessionError("session checkpoint must be a JSON object")
         return cls(
             step=data.get("step", 0), counters=dict(data.get("counters", {})),
             messages=list(data.get("messages", [])),
@@ -157,6 +160,8 @@ class Session:
     # Set when a reopened session had an action in flight. It is reported and
     # never replayed; the field is kept so the user can see what it was.
     uncertain: dict = None
+    run_settings: dict = field(default_factory=dict)
+    result: dict = field(default_factory=dict)  # final checks/diff; empty on older sessions
 
     @property
     def finished(self):
@@ -197,6 +202,8 @@ class Session:
             pending = self.uncertain or self.checkpoint.pending
             lines.append(f"UNCERTAIN: {_action_text(pending)} was started but never "
                          "confirmed finished. It will NOT be replayed automatically.")
+        if self.result:
+            lines.append(f"Final verification: {self.result.get('verdict', 'UNAVAILABLE')}")
         return "\n".join(lines)
 
     def to_dict(self):
@@ -207,11 +214,14 @@ class Session:
             "checkpoint": self.checkpoint.to_dict(),
             "created_at": self.created_at, "updated_at": self.updated_at,
             "uncertain": self.uncertain,
+            "run_settings": self.run_settings, "result": self.result,
         }
 
     @classmethod
     def from_dict(cls, data):
         try:
+            if not isinstance(data, dict) or not isinstance(data.get("spec"), dict):
+                raise SessionError("session file must be an object with a task specification")
             return cls(
                 id=data["id"], spec=TaskSpec.from_dict(data["spec"]),
                 status=data.get("status", RUNNING), summary=data.get("summary", ""),
@@ -219,8 +229,10 @@ class Session:
                 checkpoint=Checkpoint.from_dict(data.get("checkpoint", {})),
                 created_at=data.get("created_at", ""), updated_at=data.get("updated_at", ""),
                 uncertain=data.get("uncertain"),
+                run_settings=dict(data.get("run_settings", {})),
+                result=dict(data.get("result", {})),
             )
-        except (KeyError, TypeError) as error:
+        except (KeyError, TypeError, ValueError, AttributeError) as error:
             raise SessionError(f"session file is missing or malformed: {error}") from None
 
 
@@ -234,6 +246,24 @@ class SessionStore:
         if not ID_PATTERN.match(str(session_id)):
             raise SessionError(f"not a valid session id: {session_id!r}")
         return self.directory / f"{session_id}{SESSION_SUFFIX}"
+
+    @contextmanager
+    def claim(self, session_id):
+        """One runner per session (POSIX); readers/cancellation never need a lock."""
+        import fcntl
+
+        path = self.path_for(session_id).with_suffix(".lock")
+        self.directory.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as handle:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SessionError(f"session {session_id} is active in another process; "
+                                   "use status or cancel before resuming") from None
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
     def save(self, session):
         """Write the session durably and atomically. Returns the path.
@@ -271,7 +301,12 @@ class SessionStore:
             raise SessionError(f"cannot read session {session_id}: {error}") from None
         except json.JSONDecodeError as error:
             raise SessionError(f"session {session_id} is not valid JSON: {error}") from None
-        return Session.from_dict(data)
+        except UnicodeError:
+            raise SessionError(f"session {session_id} is not valid UTF-8") from None
+        saved = Session.from_dict(data)
+        if saved.id != session_id:
+            raise SessionError(f"session id {saved.id!r} does not match filename {session_id}")
+        return saved
 
     def list_sessions(self):
         """Every saved session, newest id first. Unreadable files are skipped."""
@@ -399,7 +434,7 @@ def check_resume(session, root, branch, commit, dirty, mode, allowed_changes,
                 f"{path} was changed by the agent and has been modified since "
                 "(the saved content is not what is on disk)")
 
-    if saved.dirty and sorted(saved.dirty) != sorted(dirty):
+    if sorted(saved.dirty) != sorted(dirty):
         appeared = sorted(set(dirty) - set(saved.dirty))
         vanished = sorted(set(saved.dirty) - set(dirty))
         detail = []

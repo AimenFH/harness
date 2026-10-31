@@ -82,6 +82,8 @@ def _check_text(check: CommandResult):
 
     if check.succeeded:
         verdict = "PASS"
+    elif check.cancelled:
+        verdict = "CANCELLED (not passed)"
     elif check.timed_out:
         verdict = f"FAIL (timed out after {check.duration_seconds:.0f}s)"
     elif check.no_tests_ran:
@@ -116,16 +118,16 @@ class Verifier:
         self.git = ExecutionEnvironment(root, timeout_seconds, allowed_commands=git_commands(git))
         self.files = RepositoryTools(root, mode="readonly")  # to show new files safely
 
-    def verify(self):
+    def verify(self, cancel=None):
         """Inspect the repository and run all checks. Never raises for a failed check."""
         result = VerificationResult()
         self._inspect_git(result)
-        result.checks = [self._run_check(name) for name in self.check_names]
+        result.checks = [self._run_check(name, cancel=cancel) for name in self.check_names]
         return result
 
-    def _run_check(self, name):
+    def _run_check(self, name, cancel=None):
         try:
-            return self.checks.run(name)
+            return self.checks.run(name, cancel=cancel)
         except ExecutionError as error:
             # Not a configured check: report it as a failed check, don't skip it.
             return CommandResult(name=name, command=[name], exit_code=None, stdout="",

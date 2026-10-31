@@ -1,4 +1,4 @@
-# 🛠️ Coding Harness (Stage 1 Proof of Concept)
+# 🛠️ Coding Harness (Stage 2 in progress)
 
 This project is a secure coding harness designed to connect a Large Language Model (LLM) to a local codebase. It allows an AI agent to explore a repository, identify bugs, apply fixes, and verify those fixes through automated tests—all while maintaining a strict security boundary to protect the host system.
 
@@ -7,18 +7,19 @@ This project is a secure coding harness designed to connect a Large Language Mod
 The harness follows a modular design to ensure a clear separation of concerns:
 
 ```text
-User CLI ──> Agent Controller <──> LLM (Ollama)
-             │
-     ┌───────┼──────────────────┐
-     ▼       ▼                  ▼
- Repository  Execution        Basic Context
-   Tools    Environment      (Task + Files + Results)
-     │       │
-     │       ▼
-     │   Docker sandbox: read-only repo copy, no network, no host files
-     └───────┼──────────────────┘
-             ▼
-     Verification (Tests in sandbox + Git Diff) ──> User Review
+main.py ──> cli.py ──> application.py ──> Controller <──> ModelClient / Ollama
+                            │                │
+                            │                ├── RepositoryTools / Navigator
+                            │                ├── Context (task + files + results)
+                            │                └── ExecutionEnvironment ──> Docker
+                            │
+                            ├── Project approvals / SessionStore
+                            └── Verifier (checks in Docker + Git diff)
+                                          │
+                                          ▼
+                                Saved results ──> CLI review
+
+Docker: read-only repository mount, no network, no unrelated host files
 ```
 
 ### The agent loop (`controller.py`)
@@ -47,7 +48,11 @@ User CLI ──> Agent Controller <──> LLM (Ollama)
 ### Module Responsibilities
 | Module | Responsibility | Key Features |
 | :--- | :--- | :--- |
-| `main.py` | **Interface** | Argument parsing, session wiring, and structured reporting. |
+| `main.py` | **Entry point** | Thin executable; preserves Stage 1 imports and model/sandbox injection. |
+| `cli.py` | **Interface** | Subcommands, argument validation, progress and saved-result presentation; no controller loop. |
+| `application.py` | **Task services** | Start/resume/cancel orchestration, sandbox/model wiring, final verification and saved results; no argument parsing. |
+| `projects.py` | **Project approvals** | Strict TOML configuration, canonical repository paths, protected control-file locations. |
+| `session.py` | **Persistence** | Atomic checkpoints, saved history/checks/diff, safe-resume validation, one runner per task. |
 | `controller.py` | **Orchestration** | The agentic loop: Request $\rightarrow$ Validate $\rightarrow$ Execute $\rightarrow$ Return. |
 | `model_client.py` | **LLM Bridge** | Integration with Ollama; handles system prompting and JSON parsing. |
 | `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`. |
@@ -108,7 +113,112 @@ cp settings.example.toml settings.toml
 ```
 
 ### Usage
-Run the harness against a target repository:
+
+Approve a **disposable repository copy** explicitly before using the Stage 2 commands.
+The harness edits the selected copy directly; `start` does not create one for you.
+The copy must be a Git repository with at least one commit.
+
+```bash
+mkdir -p ~/.harness
+cp projects.example.toml ~/.harness/projects.toml
+# Edit ~/.harness/projects.toml with your actual disposable repository path:
+```
+
+```toml
+[projects]
+cosmic = "/absolute/path/to/disposable-cosmic-copy"
+```
+
+Names select exactly one directory. Paths may be absolute, start with `~/`, or be
+relative to the TOML file. Missing/empty configurations, unknown fields, invalid
+types, duplicate canonical paths and dangerous roots are rejected. Keep the
+approval file, settings, session directory and task records outside approved
+repositories so the agent cannot modify its own permissions or evidence.
+
+```bash
+python main.py projects
+python main.py start --project cosmic \
+  --task "Fix the incorrect total calculation in pricing.py" \
+  --mode edit --model qwen2.5-coder:7b --check pytest \
+  --allow pricing.py --file pricing.py
+
+# Use the ID printed as soon as the task starts, including from another terminal:
+python main.py list
+python main.py status TASK_ID
+python main.py show TASK_ID
+python main.py cancel TASK_ID --reason "Pause for review"
+python main.py resume TASK_ID --dry-run
+python main.py resume TASK_ID
+```
+
+`start` runs in the foreground and saves every checkpoint by default under
+`~/.harness/sessions`. `cancel` requests a cooperative stop; `status` shows the
+persisted outcome once the worker observes it. `show` displays action results,
+errors, conversation history, final checks and the saved diff without contacting
+the model, running tests, or requiring the target repository to still exist.
+For an interrupted or older task without a final report, unavailable results are
+labelled explicitly. To inspect the **current** working-copy diff as well, use
+`show TASK_ID --live-diff`; this requires current project approval and runs no tests.
+
+Override the configuration/storage paths before or after a subcommand:
+
+```bash
+python main.py --projects-file /path/to/projects.toml \
+  --session-dir /path/to/sessions start --project cosmic \
+  --task "Inspect allocation behavior" --mode readonly --model qwen2.5-coder:7b \
+  --offline
+python main.py status TASK_ID --session-dir /path/to/sessions
+python main.py resume TASK_ID --projects-file /path/to/projects.toml \
+  --session-dir /path/to/sessions --offline
+```
+
+`--offline` uses scripted model replies; final checks still run in Docker by
+default. Run `python main.py COMMAND --help` for command options. The existing
+`--settings`, `--file`, `--allow`, `--acceptance`, `--record`, `--check` and
+`--sandbox` options are available on `start`. Model and sandbox settings are
+saved for resume; `resume --model NAME` or `--sandbox docker|none` overrides them.
+
+| Exit code | Meaning |
+| :--- | :--- |
+| `0` | Successful run, successful inspection/cancel request, or safe resume dry run. |
+| `1` | Task did not complete successfully, or final checks failed/were unavailable. |
+| `2` | Invalid usage/configuration, denied project, unreadable session, active-session conflict, or setup/I/O error. |
+| `3` | Resume paused because checkpoint safety checks failed; no actions executed. |
+| `130` | Task cancelled or interrupted with Ctrl+C. |
+
+### Checkpoints and safe resume
+
+Task specifications, actions and conversation history are saved outside the
+target with atomic JSON replacement. A pre-action checkpoint records the action
+about to run; a post-action checkpoint records its outcome. Final verification
+adds the full check results/output and diff to the session. If the process dies
+before verification is saved, `show` reports the missing final result explicitly.
+
+Resume preserves consumed limits, mode and allowed paths; checks current project
+approval, branch/commit, changed-file status and hashes of harness-written files;
+and refuses a completed task or an exhausted budget. Uncertain interrupted actions
+pause the CLI and are never replayed automatically. Inspect the history and current
+diff, then start a new task after resolving uncertainty. A process lock prevents
+two CLI workers from resuming the same session. `--dry-run` leaves the checkpoint
+and cancellation marker unchanged. Cancelled runs remain resumable once their
+worker has stopped. Cancellation also applies to final verification.
+
+Known limits: runner locks currently require POSIX (`fcntl`, macOS/Linux). The
+existing checkpoint tracks content hashes for harness-written files and Git status
+for other changes; it does not hash every untouched file. Context compaction and
+additional lint/build checks remain separate planned Stage 2 work.
+
+### Stage 1 compatibility
+
+The original launch form still works, including the demo and existing Python
+imports. Direct `--root` selection applies the default project configuration when
+present, or an explicit `--projects-file`. Without a configuration it retains
+Stage 1 behavior; use `start --project` to require approval on every launch. Legacy runs
+are saved only when `--session-dir` is supplied. Existing `--list-sessions`,
+`--cancel ID` and `--resume ID` forms remain available with `--session-dir`.
+Tasks started with approvals still require current approval when resumed through
+the legacy flag form.
+
 ```bash
 python main.py \
   --root /path/to/target-repo \
@@ -152,6 +262,7 @@ The tests that start real Docker containers (`tests/test_sandbox.py`) are skippe
 - ✅ **Error Handling**: Ensuring invalid tool requests return clear errors.
 - ✅ **Sandbox**: The container sees no secrets, host files or network and cannot write the repository; a timeout removes the container.
 - ✅ **Settings**: The example file matches the defaults; unknown or invalid settings are rejected.
+- ✅ **Stage 2 CLI**: All commands, strict project configuration, denied projects, saved review after restart, failure exit codes, resume safety and concurrent-run rejection. A separate-process test cancels an active task during its first model wait, then resumes it safely. Existing cancellation tests cover process/child/container cleanup.
 
 ### Real-World Demo
 The `demo/` folder contains a proof-of-concept fix for the **Cosmic Python** repository:

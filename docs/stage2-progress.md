@@ -12,7 +12,7 @@ This file records each phase: what was checked or built, test results, and open 
 | 5 | Cancellation (from another process, mid-request, mid-command) | **done** |
 | 6 | Session storage and safe resume | **done** |
 | 7 | Verification extras (lint/build checks, unfinished work) + check loop | planned |
-| 8 | CLI subcommands, allowed projects, interface/core split | planned |
+| 8 | CLI subcommands, allowed projects, interface/core split | **done** |
 | 9 | Stage 2 feature demo (task, acceptance + regression checks, rehearsal) | planned |
 | 10 | README, diagrams, real-model run, results | planned |
 
@@ -122,10 +122,10 @@ Status today: ✅ done in Stage 1 · 🟡 partly · ❌ missing.
 | V3 | Show **unfinished work** | ❌ |
 | V4 | Failed / unavailable checks stay visible, never shown as passed | ✅ |
 | V5 | Build checks if needed | ❌ (e.g. compile check) |
-| U1 | **Select an allowed project** | ❌ any `--root` |
-| U2 | Start and **inspect** a task | 🟡 start only |
-| U3 | Cancel, resume, review the result from the CLI | ❌ |
-| U4 | Interface code separate from core logic | 🟡 `main.py` mixes both |
+| U1 | **Select an allowed project** | ✅ named, explicit TOML approvals (Phase 8) |
+| U2 | Start and **inspect** a task | ✅ `start`, `status`, `show`, `list` (Phase 8) |
+| U3 | Cancel, resume, review the result from the CLI | ✅ `cancel`, safe `resume`, saved checks/diff (Phase 8) |
+| U4 | Interface code separate from core logic | ✅ `cli.py` / `application.py` / controller (Phase 8) |
 | P1 | Disposable target copy; credentials and host files outside executed code | ✅ |
 | P2 | Repository code runs contained (not just a worktree) | ✅ Docker |
 | P3 | Arguments/permissions checked in application code; repo text and model replies untrusted | ✅ |
@@ -974,3 +974,63 @@ with status `cancelled`.
   deliberate, since a half-written file is worse than a finished one.
 - `--cancel` needs `--session-dir`: a run started without one has no id and
   nothing to address, so only Ctrl+C can stop it.
+
+---
+
+## Phase 8 — Command-line interface (2026-10-31)
+
+Requirement 6 / **U1–U4** implemented. Scope: CLI and project selection; other
+planned phases remain open.
+
+### Changes
+
+- `main.py` is a thin executable and Stage 1 import/injection compatibility layer.
+  `cli.py` owns parsing and terminal presentation; `application.py` owns task
+  lifecycle services and delegates execution to the existing controller.
+- `start --project NAME` selects an exact canonical path from `[projects]` in
+  `~/.harness/projects.toml` (override with `--projects-file`). Configuration fails
+  closed; rejects missing/empty/malformed files, unknown fields, invalid values,
+  duplicates, dangerous roots and control files inside approved repositories.
+  New starts require a Git repository with a starting commit.
+- Sessions save by default in `~/.harness/sessions` (override `--session-dir`). The
+  session ID is printed before the model request, and the initial conversation
+  checkpoint is saved so a first-request interruption can be resumed.
+- `status` displays saved progress; `show` displays action and conversation history,
+  errors, results, full final check results and the persisted diff. These commands
+  need neither a model nor the original repository. `show --live-diff` reads the
+  current approved working copy without running tests. `projects` and `list` aid
+  discovery.
+- `cancel` works from another process and remains idempotent. Final verification
+  now receives cancellation too, preventing checks from restarting after a stop.
+- `resume` rechecks current approval, permissions, branch/commit, saved changes and
+  limits. It pauses for uncertain actions or unavailable Git state. POSIX process
+  locks prevent simultaneous CLI runners for a session. Dry runs leave the saved
+  checkpoint/cancel flag unchanged. Model/sandbox settings are restored.
+- Sessions accept older files without final-report fields and label unavailable
+  evidence explicitly. Malformed session shapes, invalid IDs and ID/filename
+  mismatches produce useful errors. SIGINT handlers are restored for embedded callers.
+- Stage 1 direct-root launch, `parse_config` imports, demo model/sandbox injection,
+  and legacy session flags remain supported. Direct-root compatibility launches
+  apply configured approvals when available and retain prior behavior without a
+  configuration; new subcommands require approval. Approved tasks cannot bypass
+  revalidation through legacy resume flags.
+- README includes configuration and launch examples, architecture, checkpoint
+  design, platform/compatibility limits, and exit codes 0/1/2/3/130. No new dependencies.
+
+### Validation
+
+- Baseline before changes: **315 passed**.
+- Added **84 CLI tests** in `tests/test_cli_commands.py`.
+- Full suite: `.venv/bin/python -m pytest -q` → **399 passed, 0 skipped**
+  (includes all Stage 1 tests and real Docker checks).
+- `git diff --check` and top-level / `start --help` checks passed.
+- CLI tests include every command, configuration and permission errors, failure
+  reporting, restart-safe inspection, revoked approval, checkpoint mismatches,
+  uncertain actions, budgets, active-run locks, Stage 1 flags, actual process exit
+  codes, and a real-process cancel/resume cycle during the first model request.
+
+Known limits: process locks use POSIX `fcntl`; the existing working-copy safety
+check hashes harness-written files and compares Git status for other changes,
+not the bytes of every untouched file. No context compression or lint/build work
+was added in this phase. `--offline` replaces the model only; checks still use the
+configured sandbox.

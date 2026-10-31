@@ -199,6 +199,7 @@ class Controller:
         self.record = TaskRecord(spec=self.spec)
         messages = initial_messages(task, self.config.mode, self._check_names(),
                                     self.selected_files_text(context_files))
+        self._checkpoint(messages, 0, status="running")
         return self._loop(messages, rejected_in_a_row=0)
 
     def resume(self, session):

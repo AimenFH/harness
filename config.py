@@ -80,6 +80,9 @@ class Config:
     # passes the safety checks). Revalidated before a session is resumed.
     allowed_projects: tuple = ()
 
+    # Trusted approval configuration used by the CLI; empty for Stage 1 callers.
+    projects_file: str = ""
+
     ollama_url: str = DEFAULT_OLLAMA_URL
     model_timeout_seconds: int = 300  # local models can be slow, esp. the first call
     num_ctx: int = DEFAULT_NUM_CTX

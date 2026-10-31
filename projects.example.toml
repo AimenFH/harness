@@ -1,0 +1,6 @@
+# Copy to ~/.harness/projects.toml, then explicitly approve disposable copies.
+# Paths may be absolute, ~/..., or relative to this configuration file.
+# Each name selects exactly this directory, never its parents or children.
+# Keep this file outside every approved repository.
+[projects]
+cosmic = "/absolute/path/to/disposable-cosmic-copy"

@@ -589,6 +589,6 @@ def test_cancellation_does_not_depend_on_ctrl_c():
     source = open(cancellation.__file__, encoding="utf-8").read()
     assert "SIGINT" not in source
     assert "KeyboardInterrupt" not in source
-    # SIGINT is only an extra convenience, installed by the CLI.
-    import main
-    assert "signal.signal" in open(main.__file__, encoding="utf-8").read()
+    # SIGINT is only an extra convenience, installed by the lifecycle service.
+    import application
+    assert "signal.signal" in open(application.__file__, encoding="utf-8").read()
