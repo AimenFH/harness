@@ -1,0 +1,105 @@
+{
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.7 (v3.14.7:823f0323ee6, Aug  5 2026, 07:07:01) [Clang 21.0.0 (clang-2100.1.1.101)]",
+  "harness_start_commit": "541d953c92678e533c5c6502f63c342b91fd63a9",
+  "ollama_tags": {
+    "models": [
+      {
+        "name": "qwen3:8b",
+        "model": "qwen3:8b",
+        "modified_at": "2026-10-14T20:32:34.855582911+02:00",
+        "size": 5225388164,
+        "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen3",
+          "families": [
+            "qwen3"
+          ],
+          "parameter_size": "8.2B",
+          "quantization_level": "Q4_K_M",
+          "context_length": 40960,
+          "embedding_length": 4096,
+          "runner": "ggml"
+        },
+        "capabilities": [
+          "completion",
+          "tools",
+          "thinking"
+        ]
+      },
+      {
+        "name": "qwen2.5-coder:7b",
+        "model": "qwen2.5-coder:7b",
+        "modified_at": "2026-10-06T22:59:59.770713118+02:00",
+        "size": 4683087561,
+        "digest": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen2",
+          "families": [
+            "qwen2"
+          ],
+          "parameter_size": "7.6B",
+          "quantization_level": "Q4_K_M",
+          "context_length": 32768,
+          "embedding_length": 3584,
+          "runner": "ggml"
+        },
+        "capabilities": [
+          "completion",
+          "tools",
+          "insert"
+        ]
+      },
+      {
+        "name": "qwen2.5-coder:3b",
+        "model": "qwen2.5-coder:3b",
+        "modified_at": "2026-09-19T12:32:58.725267777+02:00",
+        "size": 1929912626,
+        "digest": "f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen2",
+          "families": [
+            "qwen2"
+          ],
+          "parameter_size": "3.1B",
+          "quantization_level": "Q4_K_M",
+          "context_length": 32768,
+          "embedding_length": 2048,
+          "runner": "ggml"
+        },
+        "capabilities": [
+          "completion",
+          "tools",
+          "insert"
+        ]
+      }
+    ]
+  },
+  "docker_server_version": "29.8.2",
+  "sandbox_image_id": "sha256:3d37d247edeed4121d8d71d1244e850d9c1024c5f7cff8ca049a3a1b346f20ac",
+  "protected_manifest": {
+    "TASK.txt": "b717e4cb45b855358d3c4ef68316a79b9c874aefa7da31b35e587a343245796f",
+    "run_checks.py": "f3826ea6ad48334bcd70b3109db6ce3e0b319c2ee0e4a85a5c2563e7cd31e02f",
+    "acceptance/acceptance_expiry.py": "ce721f87e9d71f6b81f10d402fbc3c02ea79e963d56e9fb76a5efbd21be6cd4c",
+    "regression/tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "regression/tests/conftest.py": "1928c88fab3ab8ef02d779d48274899952c0eb6c466fafdbd4b6e320e4d51a35",
+    "regression/tests/integration/test_orm.py": "60d32693a36218eed5cb95b0f60954514c3e6b26e7d41dfb46e184fcddfb01fa",
+    "regression/tests/integration/test_repository.py": "656d16871351d084699661b2fb2ff52611a9b937bfce066b256ed1de2c32f07f",
+    "regression/tests/unit/test_allocate.py": "587bf3a3329e1d267026bf4d43b0cbb2b4432992adfa00bb9074769997fee50b",
+    "regression/tests/unit/test_batches.py": "2a5008b4354743c332f581b0f0bcaaf35ef29c5fb8c11b107e675ee18b192d74",
+    "regression/tests/unit/test_services.py": "7db5f0e669135e3766ef2f615d71df69f72a77c9bedcbe8340a9dd31be0a2c55",
+    "regression/SOURCE.json": "eb0c0f95564c6e4e352eabcf06475d8ed82215fccf2b1cc12123412308f47511",
+    "conftest.py": "1856ffe45a034636dc42ed849c22dc54dbd298d6116a843bde49fd538c204021",
+    "regression/LICENSE.cosmicpython": "1aa2387124c47ab728c0df6ad9b628fb0783ede816150adbeb166c2e9d49bdd2"
+  },
+  "execution": "local macOS; Ollama on localhost:11434; target checks in Docker",
+  "preferred_model": "qwen2.5-coder:7b",
+  "feature_source_manually_edited": false,
+  "protected_tests_edited": false
+}
