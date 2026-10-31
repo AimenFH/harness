@@ -311,6 +311,7 @@ BROKEN_HELLO = 'def greet():\n    return 42\n'
 def test_done_without_check_after_edit_is_refused(tmp_path):
     repo = hello_repo(tmp_path, test_code=FAILING_TEST)
     h = make_harness(repo, [
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},  # edit_file needs this
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": FIXED_HELLO}},
         {"tool": "done", "arguments": {}, "summary": "Fixed"},
         {"tool": "run_check", "arguments": {}},
@@ -319,7 +320,7 @@ def test_done_without_check_after_edit_is_refused(tmp_path):
 
     result = h.controller.run("Fix it")
 
-    assert "have not run a check" in tool_result_sent(h.model, 2)
+    assert "have not run a check" in tool_result_sent(h.model, 3)
     assert h.controller.counters.denied == 1
     assert result.status == DONE
     assert result.summary == "Fixed and tested"
@@ -328,9 +329,11 @@ def test_done_without_check_after_edit_is_refused(tmp_path):
 def test_done_after_failing_check_is_refused(repo):
     # The real qwen2.5-coder:7b run: the check failed and the model called done anyway.
     h = make_harness(repo, [
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},  # edit_file needs this
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": BROKEN_HELLO}},
         {"tool": "run_check", "arguments": {}},
         {"tool": "done", "arguments": {}, "summary": "No tests were run, so the change was made."},
+        # No second read: writing the whole file means the model knows its content.
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": HELLO_PY}},
         {"tool": "run_check", "arguments": {}},
         {"tool": "done", "arguments": {}, "summary": "Reverted; tests pass."},
@@ -338,7 +341,7 @@ def test_done_after_failing_check_is_refused(repo):
 
     result = h.controller.run("Change it")
 
-    refusal = tool_result_sent(h.model, 3)
+    refusal = tool_result_sent(h.model, 4)
     assert refusal.startswith("DENIED: Not finished: the last check FAILED")
     assert result.status == DONE
     assert result.summary == "Reverted; tests pass."
@@ -347,6 +350,7 @@ def test_done_after_failing_check_is_refused(repo):
 def test_edit_after_passing_check_needs_a_new_check(repo):
     h = make_harness(repo, [
         {"tool": "run_check", "arguments": {}},   # passes, but before the edit
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},  # edit_file needs this
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": BROKEN_HELLO}},
         {"tool": "done", "arguments": {}, "summary": "Done"},
         {"tool": "done", "arguments": {}, "summary": "Done"},

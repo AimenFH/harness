@@ -11,3 +11,6 @@ settings.toml
 # OS / editor
 .DS_Store
 .idea/
+
+# IntelliJ module file (local tooling)
+*.iml

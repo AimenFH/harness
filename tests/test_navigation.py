@@ -205,6 +205,66 @@ def test_find_symbol_inside_a_folder_and_in_src_layout(nav):
     assert nav.find_symbol("total") == ["src/shop/prices.py:1-2  function total(items)"]
 
 
+def test_find_symbol_can_be_narrowed_to_one_file(nav):
+    """`path` may name a single file, not only a folder."""
+    assert nav.find_symbol("allocate", path="domain/model.py") == [
+        "domain/model.py:23-26  method Batch.allocate(self, line: OrderLine)",
+        "domain/model.py:37-38  function allocate(line, batches)"]
+
+    # The same name in another module is then not reported.
+    assert nav.find_symbol("clean", path="service_layer/helpers.py") == [
+        "service_layer/helpers.py:1-2  function clean(text)"]
+    with pytest.raises(RepositoryError, match="Symbol 'clean' not found in 1 Python file"):
+        nav.find_symbol("clean", path="service_layer/services.py")
+
+
+def test_find_symbol_in_a_non_python_file_is_a_clear_error(nav):
+    with pytest.raises(RepositoryError, match="not a Python file"):
+        nav.find_symbol("allocate", path="README.md")
+
+
+def test_definitions_in_nested_blocks_are_found(repo, nav):
+    """A def or class inside match/async with/except* still belongs to the file."""
+    (repo / "blocks.py").write_text(
+        "import sys\n"
+        "match sys.argv:\n"
+        "    case [_]:\n"
+        "        def in_match():\n"
+        "            pass\n"
+        "    case _:\n"
+        "        class InOtherCase:\n"
+        "            pass\n"
+        "\n"
+        "\n"
+        "class Holder:\n"
+        "    match sys.argv:\n"
+        "        case [_]:\n"
+        "            def method_in_match(self):\n"
+        "                pass\n"
+        "\n"
+        "\n"
+        "async def outer():\n"
+        "    async with sys.stdin as handle:\n"
+        "        def in_async_with():\n"
+        "            pass\n"
+        "    async for line in handle:\n"
+        "        def in_async_for():\n"
+        "            pass\n"
+    )
+
+    assert nav.list_symbols("blocks.py") == [
+        "blocks.py:4-5  function in_match()",
+        "blocks.py:7-8  class InOtherCase",
+        "blocks.py:11-15  class Holder",
+        "blocks.py:14-15  method Holder.method_in_match(self)",
+        "blocks.py:18-24  async function outer()",
+        "blocks.py:20-21  function outer.in_async_with()",
+        "blocks.py:23-24  function outer.in_async_for()",
+    ]
+    assert nav.find_symbol("Holder.method_in_match") == [
+        "blocks.py:14-15  method Holder.method_in_match(self)"]
+
+
 def test_missing_symbol_is_a_clear_error(nav):
     with pytest.raises(RepositoryError, match=r"Symbol 'Nowhere' not found in \d+ Python file"):
         nav.find_symbol("Nowhere")

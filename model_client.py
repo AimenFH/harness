@@ -93,7 +93,9 @@ TOOL_HELP = {
                         'change part of a file: "old" must be copied EXACTLY from the '
                         "file (same spaces) and appear only once. Preferred way to edit"),
     "edit_file": ('{"path": "src/app.py", "content": "<full new file>"}',
-                  "replace the WHOLE file; only use it to create a new file"),
+                  "replace the WHOLE file. Use it to CREATE a new file. For a file "
+                  "that already exists you must read_file it first, and even then "
+                  "replace_in_file is the safer choice"),
     # The example has no "name": small models copy examples literally, and a
     # hard-coded name would make them run that check instead of the default.
     "run_check": ("{}",
@@ -116,6 +118,9 @@ EDIT_RULES = [
     "Read a file before you edit it. Edit existing files with replace_in_file: "
     'copy "old" exactly from the read_file result, including indentation, and '
     'give enough lines that it is unique. Put the complete changed lines in "new".',
+    "Never rewrite a whole existing file with edit_file, and never write a "
+    'placeholder such as "# existing code" or "...": that deletes real code. '
+    "edit_file is refused for a file you have not read in this run.",
     "Make the smallest change that solves the task. Do not reformat, rename "
     "or refactor unrelated code.",
     "After editing, read the file again if you are unsure the change is right.",

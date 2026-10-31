@@ -7,8 +7,8 @@ This file records each phase: what was checked or built, test results, and open 
 |---|---|---|
 | 1 | Baseline, architecture review, requirement checklist, proposal | **done** |
 | 2 | Navigation (symbols, dependencies, Git state) | **done** |
-| 3 | Context management (repo map, file selection, bounded history) | planned |
-| 4 | Task record, scope enforcement, session store, checkpoints | planned |
+| 3 | Context management (repo map, file selection, bounded history) | **not started** (skipped for now) |
+| 4 | Task record, scope enforcement, action log, stopping rules | **done** |
 | 5 | Cancellation (model request + command) | planned |
 | 6 | Safe resume (revalidation, pause on mismatch / uncertain action) | planned |
 | 7 | Verification extras (lint/build checks, unfinished work) + check loop | planned |
@@ -243,8 +243,8 @@ the model as five read-only tools (allowed in `readonly` and `edit` mode):
 | Tool | Arguments | Result |
 |---|---|---|
 | `find_files` | `pattern`, optional `path` | Files whose path contains the text (case-insensitive), match a glob (`tests/test_*.py`), or a dotted module name (`service_layer.services`). Python files show their module name. |
-| `list_symbols` | `path` | Every class, function, method and property in one Python file: `path:start-end kind Qualified.name(signature)`. Includes nested classes/functions and definitions inside `if`/`try` blocks (e.g. `if TYPE_CHECKING:`). |
-| `find_symbol` | `name`, optional `path` | Definitions of a plain name (`allocate`: all of them) or a qualified one (`Batch.allocate`). |
+| `list_symbols` | `path` | Every class, function, method and property in one Python file: `path:start-end kind Qualified.name(signature)`. Includes nested classes/functions and definitions inside any nested block (`if TYPE_CHECKING:`, `try`/`except*`, `with`/`async with`, `for`/`async for`, `while`, `match`/`case`). |
+| `find_symbol` | `name`, optional `path` | Definitions of a plain name (`allocate`: all of them) or a qualified one (`Batch.allocate`). `path` may name a folder **or a single file**. |
 | `module_dependencies` | `path` | The module's static imports split into repository-internal (with the file each resolves to) and external, plus the repository modules that import it. Handles `import a.b`, `from a import b` (submodule or name), relative imports (`from . import x`, `from ..x import y`), imports inside functions, and a `src/` layout. |
 | `git_state` | none | Branch (or detached HEAD), commit (or "no commits yet"), changed files with their two-letter status, untracked files. Paths relative to `--root`, also when it is a subfolder of a bigger repository. |
 
@@ -264,15 +264,15 @@ the model as five read-only tools (allowed in `readonly` and `edit` mode):
 | `navigation.py` | **new** — `RepositoryNavigator`, `module_name`, `parse_porcelain`, `git_state_commands` |
 | `controller.py` | builds a `RepositoryNavigator` from the same `RepositoryTools` (or takes one); five new handlers; progress line shows `pattern`/`name` |
 | `model_client.py` | tool schemas + help text for the five tools, `NAVIGATION_TOOLS`, one new prompt rule |
-| `tests/test_navigation.py` | **new** — 56 tests |
+| `tests/test_navigation.py` | **new** — 59 tests |
 | `README.md` | module table: `navigation.py` |
 
-### Tests (`tests/test_navigation.py`, 56 tests)
+### Tests (`tests/test_navigation.py`, 59 tests)
 
 | Area | What is checked |
 |---|---|
 | Files/modules | substring, glob, dotted module name, inside a folder, case-insensitive, no match, empty pattern, `module_name` rules |
-| Symbols | classes, functions, methods, properties, async, nested classes/functions, `if TYPE_CHECKING:` definitions, line ranges and signatures; plain vs qualified names; folder filter; `src/` layout |
+| Symbols | classes, functions, methods, properties, async, nested classes/functions, definitions in nested blocks (`if TYPE_CHECKING:`, `match`/`case`, `async with`, `async for`), line ranges and signatures; plain vs qualified names; folder filter; **single-file filter**; non-Python file filter; `src/` layout |
 | Dependencies | absolute, `from pkg import module`, `from module import name`, relative (`.`/`..`), alias, import inside a function, external vs internal, reverse "imported by", relative import above the root, `src/` layout |
 | Errors | syntax error (single file → error; repository-wide → skipped and reported), null bytes, non-UTF-8, non-Python, missing file, missing symbol, invalid symbol names, parsing never runs code |
 | Permissions | `..`, absolute paths, `path=".."`, `.git` contents, symlink to a file outside (denied, content not leaked), result list limit |
@@ -282,8 +282,8 @@ the model as five read-only tools (allowed in `readonly` and `edit` mode):
 ### Results
 
 ```
-python -m pytest -q tests/test_navigation.py   ->  56 passed
-python -m pytest -q                            ->  208 passed (152 Stage 1 + 56 new), 0 skipped, Docker tests included
+python -m pytest -q tests/test_navigation.py   ->  59 passed
+python -m pytest -q                            ->  211 passed (152 Stage 1 + 59 new), 0 skipped, Docker tests included
 demo.py rehearse + verify (Stage 1 demo)       ->  SUCCESS; acceptance / regression / scope PASS
 ruff --select F,E9,B,BLE,I on the new files    ->  clean
 ```
@@ -299,3 +299,293 @@ imported by `entrypoints/flask_app.py`, `tests/unit/test_services.py`; `git_stat
 - Static analysis: dynamic imports (`importlib.import_module("x")`, `__import__`) and names created at run time are not found.
 - `find_symbol` finds definitions, not every use of a name; use `search` (text) or `module_dependencies` (imports) for uses.
 - `git_state` does not yet compare against the task's starting commit; that comes with the task record (Phase 4).
+
+### Phase 2 follow-up — verification on the Mac and two fixes (2026-10-31)
+
+Phase 2 was first built and committed from a cloud container with no Ollama, so the
+"so Ollama can use them" half of the requirement had never actually been exercised
+against a live model. This follow-up re-ran everything on the developer's Mac
+(Python 3.14.7, Docker 29.8.2, Ollama 0.40.11) and closed two real gaps found by
+probing the navigator against the **real** target repository rather than fixtures.
+
+**Live model run** — readonly, `qwen2.5-coder:7b`, target Cosmic Python @ `97267473`:
+
+```
+[1] find_symbol allocate
+[2] module_dependencies domain/model.py
+[3] git_state
+[4] done
+Run: done (actions 4/20 | executed 3 | malformed 0 | denied 0 | tool errors 0 | truncated 0)
+Verification: PASS (1/1 checks passed)      Result: SUCCESS
+```
+
+The model picked all three navigation tools unprompted, in a sensible order, with no
+malformed replies and no denied requests, and changed nothing. That is the evidence
+that the tools are usable by a real local model, not only by the scripted one.
+
+**Fix 1 — definitions inside `match`, `async with` and `async for` were invisible.**
+`_collect_symbols` descended into `if`/`try`/`with`/`for`/`while` but not `ast.Match`,
+`ast.AsyncWith`, `ast.AsyncFor` or `ast.TryStar`, so a `def` in any of those blocks was
+missed by both `list_symbols` and `find_symbol` — silently, which is the worst failure
+mode for a discovery tool. The block list is now a named `BLOCK_NODES` tuple (built with
+`getattr` so `TryStar` stays optional below Python 3.11) and the walk also follows
+`case` bodies.
+
+**Fix 2 — `find_symbol` could not be narrowed to one file.**
+`find_symbol("allocate", "domain/model.py")` failed with `Not a directory`, because
+`_python_files` always called `list_files`. Narrowing a search to a single file is an
+obvious thing for a model to try, and the error gave it no way forward. `_python_files`
+now accepts a file path as well as a folder, and a non-Python file gets the same clear
+`is not a Python file (.py)` message as `list_symbols`.
+
+Both fixes are covered by three new tests (`test_definitions_in_nested_blocks_are_found`,
+`test_find_symbol_can_be_narrowed_to_one_file`,
+`test_find_symbol_in_a_non_python_file_is_a_clear_error`), taking
+`tests/test_navigation.py` from 56 to 59 and the suite from 208 to 211.
+
+Checked and found already correct, so left alone: non-Python files, directories passed
+to `list_symbols`, paths outside the root, `..`, `.git` contents, missing symbols, and
+detached HEAD (the demo target is detached at the pinned commit, so `git_state` reports
+`(detached HEAD)` with the full SHA — exactly what the task record will need in Phase 4).
+
+Still open from this phase: no linter is installed on the Mac (`ruff`, `flake8`,
+`pylint`, `mypy` all absent), so the `ruff` line in the results above is from the
+cloud run and cannot be reproduced locally yet. Phase 7 adds the linter to
+`requirements.txt` and to the sandbox image.
+
+---
+
+## Phase 4 — Task execution (2026-10-31)
+
+Requirements covered: **T1, T2, T3** and the task-execution half of **S2**.
+Tests: **X6** (checks and loop), plus the permission, limit and scope tests.
+Built and verified entirely on the developer's Mac.
+
+Numbering note: this phase answers the brief's *third* "What to build" row
+(Task execution). The *second* row (Context: repository map, file selection,
+bounded history) was **skipped** and is still open — see "Still missing" below.
+
+### What was built
+
+New module `task_record.py`:
+
+| Part | Role |
+|---|---|
+| `TaskSpec` | The request, project, root, **starting commit**, mode, allowed changes, checks, acceptance commands and limits. `validate()` refuses a specification whose acceptance command sits inside the agent's writable area. |
+| `ScopePolicy` | Which files may be changed, as globs relative to the root. `allows(path)` / `refusal(path)`. No patterns = any file in the root, which is the Stage 1 behaviour. |
+| `ActionRecord` | One model reply: step, tool, arguments, outcome (`ok`/`denied`/`failed`/`malformed`), detail, and for `run_check` the check's one-line status. |
+| `TaskRecord` | Spec + every action + final status and summary. `save()` / `load()` as plain JSON. |
+| `CancelToken` | A stop request the controller checks between steps. |
+
+`navigation.py` gained `head_commit()` — the current SHA through the existing
+read-only git whitelist — so a task can be pinned to the commit it started from.
+
+### Where each requirement is met
+
+| # | Requirement | Where |
+|---|---|---|
+| 1 | Save the task specification | `TaskSpec`, built by `spec_from_config()`; printed as the `=== Task Record ===` section; written with `--record FILE` |
+| 2 | Record every tool action and its result | `Controller._note()` on every path of `execute()`, plus `done` and malformed replies; printed as `=== Actions ===` |
+| 3 | Edit–test–fix loop, failed checks fed back | unchanged Stage 1 loop: the full check report (status + stdout + stderr) is the next user message. Proved by `test_failing_check_is_fed_back_and_the_fix_passes` |
+| 4 | Clear stopping conditions | `STOPPING_RULES`: `done`, `action_limit_reached`, `retry_limit_reached`, `cancelled`, `error`. `RunResult.stopping_rule()` prints the reason in words |
+| 5 | Scope enforced in the harness | `Controller.check_permission()` consults `ScopePolicy` **before** the write. `demo.py scope` still exists, but it is no longer what protects the files |
+| 6 | Reject changes outside permitted paths | same check; the denial names the allowed patterns, and the file is never opened |
+| 7 | Acceptance tests outside the writable scope | `TaskSpec.validate()` and `main.parse_config()` both refuse an `--acceptance` path inside `--root` (exit code 2) |
+| 8 | An edit needs a later passing check before `done` | unchanged `done_problem()`; `test_done_is_refused_until_a_check_passes` and `test_a_passing_check_before_the_edit_does_not_count` |
+
+### New CLI options
+
+```bash
+--allow GLOB        a file or glob the agent may change (repeat; default: anything in --root)
+--acceptance PATH   an acceptance check saved with the task; must be OUTSIDE --root
+--record FILE       write the task specification and every action to JSON
+```
+
+### A real weakness found by running the real model, and fixed
+
+The live runs exposed something the scripted tests had not. `qwen2.5-coder:7b`
+could not get `replace_in_file`'s `old` text to match, and asked for the **same
+failing action six times**, re-reading the file in between. Every attempt was a
+tool error, and tool errors deliberately do not count towards the retry limit,
+so nothing stopped it: the run burned all 20 actions making no progress. The
+in-a-row counter did not help either, because the `read_file` between attempts
+reset it.
+
+Fix: an action that already failed is remembered (`tool` + exact arguments). If
+the model asks for it again while the repository has not changed, it is
+**denied** instead of re-run, and those denials are counted on their own
+(`self.repeats`), so `max_retries` finally bites:
+
+```
+[11] replace_in_file  denied: this exact action already failed once and the
+                      repository has not changed since ...
+[13] replace_in_file  denied: ...
+[15] replace_in_file  denied: ...
+Stopped: the model asked 3 times for an action that had already failed
+(limit 3) and the repository did not change in between. It is not making progress.
+```
+
+The memory is cleared whenever a file actually changes, and `run_check` is
+exempt, because the same check legitimately gives a different answer. Covered by
+`test_repeating_an_identical_failed_action_is_denied`,
+`test_a_failed_action_may_be_retried_after_a_file_changes` and
+`test_run_check_may_always_be_repeated`.
+
+### A second weakness found, and fixed: edit_file could destroy an unread file
+
+`edit_file` replaces a whole file. Stage 1 only refused that for a file the model
+had read **truncated** (`partly_read`); a file it had **never read** was not
+protected at all. In a live run the model replaced the real 36-line
+`service_layer/services.py` with this, having never read it:
+
+```python
+class InvalidQuantity(Exception):
+    pass
+
+class InvalidSku(Exception):
+    pass
+
+# existing code
+```
+
+`# existing code` is a literal placeholder. The real code was gone, and every
+later step failed trying to patch a file that no longer contained what the model
+expected. This was the root cause of both failed live runs.
+
+Fix: the controller now tracks the files the model has seen in full
+(`read_files`) and refuses `edit_file` on an **existing** file that is not among
+them:
+
+> Permission denied: you have not read this file in this run, so replacing all of
+> it would delete code you have not seen. Call read_file first, then change only
+> the lines that need changing with replace_in_file.
+
+What counts as "seen in full", and what is deliberately still allowed:
+
+| Case | Allowed? | Why |
+|---|---|---|
+| `edit_file` on a file never read | **no** | it would delete code the model has not seen |
+| `edit_file` after a complete `read_file` | yes | the model has the content |
+| `edit_file` after a **truncated** `read_file` | **no** | the Stage 1 rule, with its own message |
+| `edit_file` to **create** a file | yes | there is nothing to destroy |
+| `edit_file` again on a file the model itself wrote | yes | writing the whole file means knowing it |
+| `edit_file` on a file passed with `--file` (not truncated) | yes | the whole content was sent with the task |
+| `replace_in_file` without reading | yes | `old` must already match, so it cannot blind-overwrite |
+| `edit_file` after only a `replace_in_file` | **no** | a partial change does not show the whole file |
+
+The prompt was updated too, so the model is told the rule instead of discovering
+it by being denied: `edit_file`'s help now says to read an existing file first and
+prefer `replace_in_file`, and a new edit rule forbids placeholders such as
+`# existing code`.
+
+**Cost, as predicted: 13 tests had to be rewritten**, 3 of them Stage 1
+(`test_controller.py`: the three `done`-gate tests) and 10 in
+`test_task_execution.py`. In every case the fix was to insert the `read_file`
+the model should have been doing anyway, and to shift the message-index
+assertions that moved as a result. No test lost its point: they are about the
+`done` gate, the task record and the scope, not about overwriting unread files.
+Nine new tests cover the rule itself.
+
+### The fix solved the task on the real model
+
+Same command, same model, same tight scope, immediately after the change:
+
+```
+[1] find_symbol allocate
+[2] read_file service_layer/services.py        <- now required before the rewrite
+[3] edit_file service_layer/services.py        <- 975 characters, the WHOLE file
+[4] read_file service_layer/services.py
+[5] run_check   SUCCEEDED (exit code 0)
+[6] done
+Run: done (actions 6/20 | executed 5 | malformed 0 | denied 0 | tool errors 0)
+Verification: PASS (1/1 checks passed)         Result: SUCCESS
+demo.py verify -> acceptance PASS | regression PASS | scope PASS
+```
+
+Forced to read the file first, the model wrote the complete 975-character module
+instead of a seven-line stub, and produced a minimal correct diff:
+
+```diff
++class InvalidQuantity(Exception):
++    pass
+...
++    if qty <= 0:
++        raise InvalidQuantity(f"Invalid quantity {qty}")
+```
+
+Two failed runs became one clean pass, from a rule in the harness rather than a
+better prompt or a bigger model. The denial the model never had to see is the
+reason it succeeded.
+
+### Files
+
+| File | Change |
+|---|---|
+| `task_record.py` | **new** — `TaskSpec`, `ScopePolicy`, `ActionRecord`, `TaskRecord`, `CancelToken`, `spec_from_config` |
+| `controller.py` | takes `spec` and `cancel`; scope check before writes; `_note()` records every action; `CANCELLED` status and `STOPPING_RULES`; repeated-failed-action rule; `read_files` + read-before-overwrite rule |
+| `config.py` | `allowed_changes`, `acceptance_commands`, `record_path`; `Allowed:` line in the summary |
+| `main.py` | `--allow`, `--acceptance`, `--record`; refuses acceptance inside `--root`; `=== Task Record ===` and `=== Actions ===` sections; `Stopped:` line |
+| `navigation.py` | `head_commit()` |
+| `tests/test_task_execution.py` | **new** — 46 tests |
+| `tests/helpers.py` | `make_harness` takes `task`, `spec`, `cancel` and any Config field |
+| `model_client.py` | `edit_file` help and a new edit rule: read an existing file first, never write a placeholder |
+| `tests/test_controller.py` | 3 `done`-gate tests now read before editing |
+
+### Results
+
+```
+python -m pytest -q tests/test_task_execution.py  ->  46 passed
+python -m pytest -q                               ->  257 passed (211 + 46), 0 skipped
+demo.py rehearse + verify (Stage 1 demo)          ->  SUCCESS; acceptance / regression / scope PASS
+real-model run, tight scope                       ->  SUCCESS in 6/20 actions (see above)
+```
+
+Three live runs with `qwen2.5-coder:7b`, scope `service_layer/services.py` only,
+in the order they happened — each one showed a different part working:
+
+| Run | Outcome | What it proved |
+|---|---|---|
+| 1 | `action_limit_reached` at 20 | the task record captures a limit stop; scope denial fired on `domain/model.py` |
+| 2 | `retry_limit_reached` at 15 | the repeated-failed-action rule stops a model that is going nowhere |
+| 3 | **`done` at 6, SUCCESS** | with the read-before-overwrite rule the model fixed the bug correctly |
+
+Runs 1 and 2 both failed for the same underlying reason — the destroyed file —
+and the enforcement the harness added on the strength of them turned run 3 into a
+pass. For the record, the denials seen along the way:
+
+```
+[7]  replace_in_file  denied: domain/model.py is outside the allowed changes
+                      for this task (service_layer/services.py)
+[15] replace_in_file  denied: this exact action already failed once ...
+Stopped: ... It is not making progress.
+```
+
+Every one of those denials is the harness refusing something, recording it, and
+stopping with a reason — never a silent failure or a false pass.
+
+### Still missing (brief requirement 2, skipped)
+
+Context management is untouched: there is still no repository map, no automatic
+file selection, and **no bound on the conversation history** — only the
+per-output `max_output_chars` truncation. A long run still grows the message
+list until Ollama's `num_ctx` silently drops the oldest messages, which is
+exactly what C3/C4 of the checklist exist to prevent.
+
+### Proving it in IntelliJ
+
+The IntelliJ project had no module, no interpreter and no run configurations, so
+nothing could be run from the IDE. Added (all inside the git-ignored `.idea/`,
+plus `harness.iml`, now also git-ignored):
+
+| File | Purpose |
+|---|---|
+| `harness.iml`, `.idea/modules.xml`, `.idea/misc.xml` | a Python module whose content root is the project, with `tests/` as a test source root and `.venv/` excluded |
+| `.idea/runConfigurations/All_tests.xml` | pytest over `tests/` |
+| `.idea/runConfigurations/Navigation_tests.xml` | pytest over `tests/test_navigation.py` |
+| `.idea/runConfigurations/Task_execution_tests.xml` | pytest over `tests/test_task_execution.py` |
+
+Each run configuration pins the interpreter with
+`SDK_HOME=$PROJECT_DIR$/.venv/bin/python`, so it runs even before a global SDK is
+registered. All files are valid XML and the command they run is the same one
+verified above. **IntelliJ must reload the project once** to pick up the new
+module and configurations; this could not be triggered from outside the IDE.

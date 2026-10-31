@@ -42,6 +42,14 @@ SOURCE_ROOTS = ("", "src/")
 # Signatures longer than this are shortened in the output.
 MAX_SIGNATURE_CHARS = 120
 
+# Statements that can hold definitions in a nested block. A def or class inside
+# one of these still belongs to the file, so the walk has to look inside them.
+# ast.TryStar ("except*") only exists from Python 3.11.
+BLOCK_NODES = tuple(node for node in (
+    ast.If, ast.Try, getattr(ast, "TryStar", None), ast.With, ast.AsyncWith,
+    ast.For, ast.AsyncFor, ast.While, ast.Match,
+) if node is not None)
+
 
 def git_state_commands(git="git"):
     """The fixed, read-only git commands git_state may run (only ever these)."""
@@ -267,9 +275,29 @@ class RepositoryNavigator:
         lines += [f"  {path}" for path in untracked] or ["  (none)"]
         return lines
 
+    def head_commit(self):
+        """The current commit as a plain SHA, or "" if there is none.
+
+        Used to pin a task to its starting commit. Read-only, like git_state.
+        """
+        commit = self.git.run("commit")
+        return commit.stdout.strip() if commit.exit_code == 0 else ""
+
     # ----- helpers -----------------------------------------------------------
 
     def _python_files(self, path):
+        """The Python files under `path`, which may also name one Python file.
+
+        Searching a single file is a reasonable way to narrow find_symbol, so
+        a file path is accepted instead of a folder.
+        """
+        target = self.tools.resolve_path(path)
+        if target.is_file():
+            relative = self.tools._relative(target)
+            if not relative.endswith(".py"):
+                raise RepositoryError(f"{path!r} is not a Python file (.py); "
+                                      "only Python files can be analysed")
+            return [relative]
         return [f for f in self.tools.list_files(path) if f.endswith(".py")]
 
     def _parse(self, path):
@@ -360,12 +388,15 @@ def _collect_symbols(body, path, parents, in_class, out):
             out.append(Symbol(kind, node.name, qualname, path, node.lineno,
                               node.end_lineno or node.lineno, signature))
             _collect_symbols(node.body, path, parents + [node.name], False, out)
-        elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
-            # Definitions inside "if TYPE_CHECKING:", "try: ... except ImportError:", ...
+        elif isinstance(node, BLOCK_NODES):
+            # Definitions inside "if TYPE_CHECKING:", "try: ... except ImportError:",
+            # "match ...: case ...:", "async with ...:", ...
             for block in ("body", "orelse", "finalbody"):
                 _collect_symbols(getattr(node, block, []), path, parents, in_class, out)
             for handler in getattr(node, "handlers", []):
                 _collect_symbols(handler.body, path, parents, in_class, out)
+            for case in getattr(node, "cases", []):
+                _collect_symbols(case.body, path, parents, in_class, out)
 
 
 def _unparse(node):

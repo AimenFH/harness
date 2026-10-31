@@ -18,7 +18,9 @@ from config import MODES, SANDBOXES, Config, load_settings
 from controller import DONE, Controller
 from execution import ALLOWED_COMMANDS, DockerSandbox, ExecutionEnvironment, ExecutionError
 from model_client import ModelClient, ScriptedModelClient
+from navigation import RepositoryNavigator
 from repository_tools import RepositoryTools
+from task_record import ScopeError, spec_from_config
 from verification import Verifier
 
 # The folder holding the harness itself. The agent must never be able to edit it.
@@ -71,6 +73,30 @@ def build_parser():
         metavar="PATH",
         help="A file (relative to --root) to send to the model with the task. "
              "Repeat to select several files.",
+    )
+    parser.add_argument(
+        "--allow",
+        action="append",
+        default=[],
+        dest="allowed_changes",
+        metavar="GLOB",
+        help="A file (or glob, relative to --root) the agent may change, e.g. "
+             "'service_layer/services.py' or 'domain/*.py'. Repeat for several. "
+             "Without it, any file inside --root may be changed.",
+    )
+    parser.add_argument(
+        "--acceptance",
+        action="append",
+        default=[],
+        dest="acceptance",
+        metavar="PATH",
+        help="An acceptance check saved with the task. It must live OUTSIDE --root, "
+             "so the agent cannot change what judges it. Repeat for several.",
+    )
+    parser.add_argument(
+        "--record",
+        metavar="FILE",
+        help="Write the task specification and every action to this JSON file.",
     )
     parser.add_argument(
         "--check",
@@ -141,6 +167,14 @@ def parse_config(argv=None):
     if args.sandbox:  # the command line wins over the settings file
         settings["sandbox"] = args.sandbox
 
+    # An acceptance check inside --root could be edited by the agent itself.
+    for path in args.acceptance:
+        if not Path(path).exists():
+            parser.error(f"--acceptance path does not exist: {path}")
+        if Path(path).resolve().is_relative_to(root):
+            parser.error(f"--acceptance must be outside --root so the agent cannot "
+                         f"change what judges it: {path}")
+
     return Config(
         root=root,
         task=task,
@@ -148,6 +182,9 @@ def parse_config(argv=None):
         model=model,
         offline=args.offline,
         context_files=tuple(args.files),
+        allowed_changes=tuple(args.allowed_changes),
+        acceptance_commands=tuple(args.acceptance),
+        record_path=args.record or "",
         check_command=args.check,
         final_checks=(args.check,),
         **settings,
@@ -184,6 +221,7 @@ def summary_text(run, verification):
     success = run.status == DONE and verification.passed
     return "\n".join([
         f"Run:          {run.status} ({run.counters_text()})",
+        f"Stopped:      {run.stopping_rule()}",
         f"Model says:   {model_says}",
         f"Verification: {verification.verdict()}",
         f"Result:       {'SUCCESS' if success else 'FAILURE'}",
@@ -200,14 +238,27 @@ def main(argv=None):
         except ExecutionError as error:
             print(f"error: {error}", file=sys.stderr)
             return 2
+    tools = RepositoryTools(config.root, config.mode)
+    navigator = RepositoryNavigator(tools, timeout_seconds=config.command_timeout_seconds)
+
+    # Pin the task to the commit the repository is on right now.
+    try:
+        spec = spec_from_config(config, starting_commit=navigator.head_commit(),
+                                acceptance_commands=config.acceptance_commands)
+    except ScopeError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     section("Task", config.summary())
+    section("Task Record", spec.summary())
 
     controller = Controller(
         config=config,
         model=build_model(config),
-        tools=RepositoryTools(config.root, config.mode),
+        tools=tools,
         executor=ExecutionEnvironment(config.root, config.command_timeout_seconds,
                                       sandbox=sandbox),
+        navigator=navigator,
+        spec=spec,
     )
     section("Progress")
     run = controller.run(config.task, config.context_files)
@@ -217,10 +268,15 @@ def main(argv=None):
                         sandbox=sandbox)
     verification = verifier.verify()
 
+    section("Actions", run.record.actions_text() if run.record else "(not recorded)")
     section("Changed Files", verification.changed_files_text())
     section("Checks", verification.checks_text())
     section("Diff", verification.diff_text())
     section("Summary", summary_text(run, verification))
+
+    if config.record_path and run.record:
+        saved = run.record.save(config.record_path)
+        print(f"\nTask record written to {saved}")
 
     return 0 if run.status == DONE and verification.passed else 1
 

@@ -61,6 +61,18 @@ class Config:
     offline: bool = False
     context_files: tuple = ()  # files the user selected to send with the task
 
+    # Glob patterns (relative to root) the agent may change. () = any file in
+    # the root, which is the Stage 1 behaviour. Enforced by the controller
+    # before a write happens, not checked afterwards.
+    allowed_changes: tuple = ()
+
+    # Acceptance checks saved with the task. They live OUTSIDE root, so the
+    # agent cannot change what judges it; main.py refuses anything inside root.
+    acceptance_commands: tuple = ()
+
+    # Where to write the task record (specification + every action). None = nowhere.
+    record_path: str = ""
+
     ollama_url: str = DEFAULT_OLLAMA_URL
     model_timeout_seconds: int = 300  # local models can be slow, esp. the first call
     num_ctx: int = DEFAULT_NUM_CTX
@@ -93,6 +105,7 @@ class Config:
             f"Model:   {self.model}",
             f"Offline: {'yes' if self.offline else 'no'}",
             f"Files:   {', '.join(self.context_files) or '(none selected)'}",
+            f"Allowed: {', '.join(self.allowed_changes) or 'any file in the repository'}",
             f"Sandbox: {self.sandbox_text()}",
         ]
         return "\n".join(lines)

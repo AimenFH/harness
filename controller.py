@@ -16,6 +16,7 @@ The loop stops when:
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from execution import CommandResult, ExecutionError
@@ -23,12 +24,23 @@ from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_me
                           validate_tool_call)
 from navigation import RepositoryNavigator
 from repository_tools import AccessDeniedError, RepositoryError
+from task_record import MALFORMED, ScopePolicy, TaskRecord, TaskSpec
 
 # Possible values of RunResult.status
 DONE = "done"
 ACTION_LIMIT = "action_limit_reached"
 RETRY_LIMIT = "retry_limit_reached"
+CANCELLED = "cancelled"
 ERROR = "error"
+
+# Why a run can stop. Printed by the CLI so the stopping rule is never implicit.
+STOPPING_RULES = {
+    DONE: "the model called done and every change had a passing check",
+    ACTION_LIMIT: "the action limit was reached; nothing further was executed",
+    RETRY_LIMIT: "too many malformed or denied requests in a row",
+    CANCELLED: "the run was cancelled; no further action was executed",
+    ERROR: "a fatal error (for example the model was unreachable)",
+}
 
 # Possible outcomes of executing one action
 OK = "ok"
@@ -54,12 +66,17 @@ class Counters:
 class RunResult:
     """What happened during one run of the harness."""
 
-    status: str          # DONE, ACTION_LIMIT, RETRY_LIMIT or ERROR
+    status: str          # DONE, ACTION_LIMIT, RETRY_LIMIT, CANCELLED or ERROR
     summary: str         # the model's summary, or why we stopped
     counters: Counters
     max_actions: int
     changed_files: list = field(default_factory=list)
     last_check: Optional[CommandResult] = None
+    record: Optional[TaskRecord] = None  # the task specification and every action
+
+    def stopping_rule(self):
+        """Why the run stopped, in words."""
+        return STOPPING_RULES.get(self.status, self.status)
 
     @property
     def succeeded(self):
@@ -85,6 +102,7 @@ class RunResult:
             f"Summary: {self.summary}",
             f"Changed files: {', '.join(self.changed_files) or 'none'}",
             f"Last check: {check}",
+            f"Stopped because: {self.stopping_rule()}",
             f"Counters: {self.counters_text()}",
         ])
 
@@ -92,7 +110,8 @@ class RunResult:
 class Controller:
     """Runs the loop between the model and the tools."""
 
-    def __init__(self, config, model, tools, executor, log=print, navigator=None):
+    def __init__(self, config, model, tools, executor, log=print, navigator=None,
+                 spec=None, cancel=None):
         """
         config:    Config (mode, limits, check_command)
         model:     anything with request_action(messages) -> Action
@@ -101,6 +120,9 @@ class Controller:
         log:       function used for progress lines (print by default)
         navigator: RepositoryNavigator; by default one built on `tools`, so
                    navigation has exactly the same path restrictions
+        spec:      TaskSpec saved with the run. By default one is built from
+                   `config`, so the scope comes from config.allowed_changes.
+        cancel:    CancelToken checked between steps; None = never cancelled
         """
         self.config = config
         self.model = model
@@ -109,6 +131,18 @@ class Controller:
         self.log = log
         self.navigator = navigator or RepositoryNavigator(
             tools, timeout_seconds=config.command_timeout_seconds)
+        self.spec = spec or TaskSpec(
+            request=config.task, project=Path(config.root).name, root=str(config.root),
+            mode=config.mode, allowed_changes=tuple(config.allowed_changes),
+            checks=(config.check_command,),
+            limits={"max_actions": config.max_actions, "max_retries": config.max_retries},
+        )
+        self.scope = ScopePolicy(self.spec.allowed_changes)
+        self.cancel = cancel
+        self.failed_actions = set()  # actions that already failed; see _repeat_problem
+        self.repeats = 0             # denied requests to repeat a failed action
+        self.partly_read = set()     # files the model has only seen truncated
+        self.read_files = set()      # files the model has seen in full this run
 
         if config.check_command not in executor.available_commands():
             raise ValueError(f"Unknown check_command {config.check_command!r}")
@@ -140,12 +174,22 @@ class Controller:
         self.changed_files = []
         self.last_check = None
         self.partly_read = set()  # files the model has only seen truncated
+        self.read_files = set()   # files the model has seen in full this run
         self.checked_since_edit = False  # a check PASSED after the last file change
+        self.failed_actions = set()
+        self.repeats = 0
+        self.record = TaskRecord(spec=self.spec)
         rejected_in_a_row = 0
         messages = initial_messages(task, self.config.mode, self._check_names(),
                                     self.selected_files_text(context_files))
 
         while True:
+            # Cancellation: checked BEFORE asking, so no further model call and
+            # no further tool runs once a stop has been requested.
+            if self.cancel is not None and self.cancel.cancelled:
+                return self._stop(CANCELLED, f"Stopped: {self.cancel.reason}. "
+                                             "No further actions were executed.")
+
             # Action limit: checked BEFORE asking, so nothing runs past it.
             if self.counters.actions >= self.config.max_actions:
                 return self._stop(
@@ -155,6 +199,7 @@ class Controller:
                 )
             self.counters.actions += 1
             step = self.counters.actions
+            self.step = step
 
             # 1. Ask the model what to do next.
             try:
@@ -166,6 +211,8 @@ class Controller:
                 self.counters.malformed += 1
                 rejected_in_a_row += 1
                 self.log(f"[{step}] malformed reply: {error}")
+                self.record.add(step, "(malformed reply)", outcome=MALFORMED,
+                                detail=str(error))
                 messages.append({"role": "assistant", "content": error.raw})
                 messages.append({"role": "user", "content":
                                  f"ERROR: invalid action: {error}\n"
@@ -178,9 +225,12 @@ class Controller:
                 if action.tool == "done":
                     problem = self.done_problem()
                     if not problem:
+                        self.record.add(step, "done", outcome=OK,
+                                        detail=action.summary or "")
                         return self._stop(DONE, action.summary or "(no summary given)",
                                           quiet=True)
                     outcome, text = self._deny(problem)
+                    self.record.add(step, "done", outcome=DENIED, detail=problem)
                 else:
                     # 3. Validate and run the tool, 4. send the result back.
                     outcome, text = self.execute(action)
@@ -193,6 +243,17 @@ class Controller:
                     RETRY_LIMIT,
                     f"Stopped: {rejected_in_a_row} malformed or denied requests in a row "
                     f"(limit {self.config.max_retries}).",
+                )
+            # Retry limit, second form: the model keeps asking for an action that
+            # already failed, so it is making no progress. These attempts are not
+            # necessarily next to each other -- a model typically re-reads the file
+            # in between -- so they are counted on their own.
+            if self.repeats >= self.config.max_retries:
+                return self._stop(
+                    RETRY_LIMIT,
+                    f"Stopped: the model asked {self.repeats} times for an action that "
+                    f"had already failed (limit {self.config.max_retries}) and the "
+                    "repository did not change in between. It is not making progress.",
                 )
 
     # ----- basic context -----------------------------------------------------
@@ -217,6 +278,8 @@ class Controller:
             text, was_cut = truncate(text, self.config.max_output_chars)
             if was_cut:
                 self.partly_read.add(self._key(path))
+            else:
+                self.read_files.add(self._key(path))
             self.log(f"[context] {path}{' (truncated)' if was_cut else ''}")
             parts.append(f"--- {path} ---\n{text}")
         return "\n\n".join(parts)
@@ -254,15 +317,52 @@ class Controller:
                 return str(error)
         if action.tool in EDIT_TOOLS and self.config.mode != "edit":
             return f"Permission denied: {action.tool} is not allowed in readonly mode"
+        if action.tool in EDIT_TOOLS:
+            # File scope is enforced here, in the harness, BEFORE anything is
+            # written -- not by a script that inspects the damage afterwards.
+            relative = self._relative(action.arguments["path"])
+            if relative is not None and not self.scope.allows(relative):
+                return self.scope.refusal(relative)
         if action.tool == "edit_file":
-            if self._key(action.arguments["path"]) in self.partly_read:
+            key = self._key(action.arguments["path"])
+            if key in self.partly_read:
                 return ("Permission denied: this file was only shown truncated, so "
                         "editing it could delete the part you have not seen")
+            # edit_file replaces the WHOLE file. Doing that to a file the model
+            # has never seen deletes code it does not know about: a real model
+            # wrote "# existing code" as a placeholder and destroyed the module.
+            if key is not None and key.is_file() and key not in self.read_files:
+                return ("Permission denied: you have not read this file in this run, "
+                        "so replacing all of it would delete code you have not seen. "
+                        "Call read_file first, then change only the lines that need "
+                        "changing with replace_in_file.")
         if action.tool == "run_check":
             name = action.arguments.get("name", self.config.check_command)
             if name not in self.executor.available_commands():
                 return f"Unknown check {name!r}. Available: {', '.join(self._check_names())}"
-        return None
+        return self._repeat_problem(action)
+
+    def _repeat_problem(self, action):
+        """Refuse an action that already failed with exactly these arguments.
+
+        Without this, a model that cannot get `old` right retries the same
+        replace_in_file until the action limit runs out: every attempt is a
+        tool error, and tool errors do not count towards the retry limit, so
+        nothing stops it. Repeating an identical failed action cannot succeed
+        while the repository is unchanged, so it is denied instead -- and a
+        denial does count, which makes the retry limit bite.
+
+        The memory is cleared whenever a file changes (see _record_change),
+        because then the same action may well work.
+        """
+        if action.tool == "run_check":  # its result legitimately changes
+            return None
+        if _action_key(action) not in self.failed_actions:
+            return None
+        self.repeats += 1
+        return ("Permission denied: this exact action already failed once and the "
+                "repository has not changed since, so repeating it cannot work. Read "
+                "the file again and copy the text exactly, or use a different tool.")
 
     def execute(self, action):
         """Validate and run one action.
@@ -272,17 +372,22 @@ class Controller:
         """
         problem = self.check_permission(action)
         if problem:
+            self._note(action, DENIED, problem)
             return self._deny(problem)
 
         try:
             text = self.handlers[action.tool](**action.arguments)
         except AccessDeniedError as error:
+            self._note(action, DENIED, str(error))
             return self._deny(str(error))
         except (RepositoryError, ExecutionError) as error:
             self.counters.tool_errors += 1
+            self.failed_actions.add(_action_key(action))
             self.log(f"    error: {error}")
+            self._note(action, FAILED, str(error))
             return FAILED, f"ERROR: {error}"
 
+        self._note(action, OK, text)
         self.counters.executed += 1
         text, was_cut = truncate(text, self.config.max_output_chars)
         if was_cut:
@@ -292,9 +397,11 @@ class Controller:
             key = self._key(action.arguments["path"])
             if was_cut:
                 self.partly_read.add(key)
+                self.read_files.discard(key)
                 text += "\nThis file cannot be edited because you have not seen all of it."
             else:
                 self.partly_read.discard(key)
+                self.read_files.add(key)
         return OK, f"Result of {action.tool}:\n{text}"
 
     def _deny(self, reason):
@@ -341,12 +448,16 @@ class Controller:
 
     def _edit_file(self, path, content):
         message = self.tools.edit_file(path, content)
-        self.partly_read.discard(self._key(path))  # the model wrote all of it
+        key = self._key(path)
+        self.partly_read.discard(key)  # the model wrote all of it
+        self.read_files.add(key)       # ... so it knows what is in it now
         self._record_change(path)
         return message
 
     def _record_change(self, path):
         self.checked_since_edit = False  # the old check result no longer counts
+        self.failed_actions.clear()      # the file changed: a failed action may now work
+        self.repeats = 0                 # real progress was made
         if path not in self.changed_files:
             self.changed_files.append(path)
 
@@ -371,11 +482,31 @@ class Controller:
         except RepositoryError:
             return None
 
+    def _relative(self, path):
+        """`path` relative to the repository root, or None if it is not inside it."""
+        try:
+            return self.tools.resolve_path(path).relative_to(self.tools.root).as_posix()
+        except (RepositoryError, ValueError):
+            return None
+
+    def _note(self, action, outcome, detail):
+        """Record one tool action and its result in the task record."""
+        record = getattr(self, "record", None)
+        if record is None:
+            return
+        check = self.last_check.status() if (action.tool == "run_check"
+                                             and self.last_check is not None) else ""
+        record.add(getattr(self, "step", len(record.actions) + 1), action.tool,
+                   action.arguments, outcome=outcome, detail=detail, check=check)
+
     def _stop(self, status, summary, quiet=False):
         if not quiet:
             self.log(summary)
+        record = getattr(self, "record", None)
+        if record is not None:
+            record.finish(status, summary)
         return RunResult(status, summary, self.counters, self.config.max_actions,
-                         list(self.changed_files), self.last_check)
+                         list(self.changed_files), self.last_check, record)
 
 
 def truncate(text, limit):
@@ -397,3 +528,8 @@ def describe(action):
 def _as_json(action):
     """Rebuild the JSON text of an action (used if the original reply is missing)."""
     return json.dumps({"tool": action.tool, "arguments": action.arguments})
+
+
+def _action_key(action):
+    """A hashable identity for one action, so an identical repeat is recognised."""
+    return action.tool, json.dumps(action.arguments, sort_keys=True)
