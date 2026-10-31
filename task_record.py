@@ -287,7 +287,8 @@ def spec_from_config(config, project="", starting_commit="", acceptance_commands
         starting_commit=starting_commit,
         mode=config.mode,
         allowed_changes=tuple(config.allowed_changes),
-        checks=tuple(dict.fromkeys((config.check_command,) + tuple(config.final_checks))),
+        checks=tuple(dict.fromkeys((config.check_command,) + tuple(config.final_checks)
+                                  + tuple(config.lint_checks) + tuple(config.build_checks))),
         acceptance_commands=tuple(acceptance_commands),
         limits={"max_actions": config.max_actions, "max_retries": config.max_retries,
                 "max_output_chars": config.max_output_chars,

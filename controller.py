@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from cancellation import CancelledError
-from execution import CommandResult, ExecutionError
+from execution import TEST_COMMANDS, CommandResult, ExecutionError
 from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_messages,
                           validate_tool_call)
 from navigation import RepositoryNavigator
@@ -547,7 +547,8 @@ class Controller:
     def _run_check(self, name=None):
         result = self.executor.run(name or self.config.check_command, cancel=self.cancel)
         self.last_check = result  # keeps the FULL output, even if truncated below
-        self.checked_since_edit = result.succeeded
+        if result.name in TEST_COMMANDS:
+            self.checked_since_edit = result.succeeded
         self.log(f"    {result.status()}")
         return result.report()
 

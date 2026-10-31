@@ -89,6 +89,8 @@ class Config:
     command_timeout_seconds: int = 30
     check_command: str = "unittest"  # what run_check runs when no name is given
     final_checks: tuple = ("unittest",)  # what verification runs at the end
+    lint_checks: tuple = ()
+    build_checks: tuple = ()
 
     max_actions: int = MAX_ACTIONS
     max_retries: int = MAX_RETRIES
@@ -123,14 +125,15 @@ class Config:
 
     def sandbox_text(self):
         if self.sandbox == "none":
-            return "none (checks run directly on this machine, NOT contained)"
+            return "none (NOT contained; repository checks are unavailable)"
         return f"{self.sandbox} (image {self.sandbox_image})"
 
 
 # Settings a settings file may change (see settings.example.toml).
 # Everything else comes from the command line.
 SETTINGS_KEYS = ("ollama_url", "model_timeout_seconds", "num_ctx", "command_timeout_seconds",
-                 "max_actions", "max_retries", "max_output_chars", "sandbox", "sandbox_image")
+                 "max_actions", "max_retries", "max_output_chars", "sandbox", "sandbox_image",
+                 "lint_checks", "build_checks")
 
 
 def load_settings(path):
@@ -153,7 +156,12 @@ def load_settings(path):
             raise ValueError(f"unknown setting {key!r} in {path}. "
                              f"Allowed: {', '.join(SETTINGS_KEYS)}")
         expected = types[key]
-        if expected is int:
+        if key in ("lint_checks", "build_checks"):
+            allowed = ("ruff",) if key == "lint_checks" else ("compileall",)
+            if not isinstance(value, list) or any(not isinstance(n, str) or n not in allowed for n in value):
+                raise ValueError(f"setting {key!r} must be an array of check names: {', '.join(allowed)}")
+            data[key] = tuple(dict.fromkeys(value))
+        elif expected is int:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"setting {key!r} must be a whole number above 0")
         elif not isinstance(value, str) or not value.strip():

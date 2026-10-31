@@ -39,7 +39,7 @@ def invoke(env, *args):
 
 def start_args(*extra):
     return ['start', '--project', 'hello', '--task', 'Inspect greeting',
-            '--mode', 'readonly', '--model', 'fake', '--offline', '--sandbox', 'none', *extra]
+            '--mode', 'readonly', '--model', 'fake', '--offline', '--sandbox', 'docker', *extra]
 
 
 def saved_task(env, *, replies=None):
@@ -47,7 +47,7 @@ def saved_task(env, *, replies=None):
                     mode='readonly', checks=('unittest',),
                     limits={'max_actions': 20, 'max_retries': 3})
     saved = Session(new_session_id(), spec,
-                    run_settings={'model': 'saved-model', 'sandbox': 'none'})
+                    run_settings={'model': 'saved-model', 'sandbox': 'docker'})
     model = make_harness(env.root, replies if replies is not None else [
         {'tool': 'read_file', 'arguments': {'path': 'hello.py'}},
     ], mode='readonly', spec=spec, session=saved, store=env.store)
@@ -68,7 +68,7 @@ def test_projects_and_start_persist_named_task_and_final_results(env, capsys):
     assert saved.result['checks'][0]['exit_code'] == 0
     assert saved.result['verdict'] == 'PASS (1/1 checks passed)'
     assert saved.run_settings['model'] == 'fake'
-    assert saved.run_settings['sandbox'] == 'none'
+    assert saved.run_settings['sandbox'] == 'docker'
     assert saved.id in output
     assert 'Result:       SUCCESS' in output
     assert saved.checkpoint.messages
@@ -187,7 +187,7 @@ def test_resume_restores_settings_limits_history_and_clears_cancel(env, monkeypa
     assert invoke(env, 'resume', saved.id) == 0
     resumed = env.store.load(saved.id)
     assert captured[0].model == 'saved-model'
-    assert captured[0].sandbox == 'none'
+    assert captured[0].sandbox == 'docker'
     assert captured[0].max_actions == 20
     assert resumed.consumed('actions') == saved.consumed('actions') + 1
     assert resumed.id == saved.id
@@ -499,7 +499,7 @@ def test_cancel_during_final_verification_is_persisted_as_cancelled(env, monkeyp
 
 def legacy_start_args(env):
     return ['--root', str(env.root), '--task', 'inspect', '--mode', 'readonly',
-            '--model', 'fake', '--offline', '--sandbox', 'none']
+            '--model', 'fake', '--offline', '--sandbox', 'docker']
 
 
 def test_legacy_start_applies_default_approvals(env, tmp_path, monkeypatch):

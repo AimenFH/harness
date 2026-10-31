@@ -38,7 +38,14 @@ ALLOWED_COMMANDS = {
     "unittest": [PYTHON, "-m", "unittest", "discover", "-s", "tests", "-v"],
     # -p no:cacheprovider: don't create a .pytest_cache folder in the repository
     "pytest": [PYTHON, "-m", "pytest", "-p", "no:cacheprovider"],
+    "ruff": ["ruff", "check", "--isolated", "--no-cache", "."],
+    # Bytecode goes to the container's tmpfs, never the read-only repository.
+    "compileall": [PYTHON, "-I", "-X", "pycache_prefix=/tmp/harness-build", "-m", "compileall", "-q", "."],
 }
+TEST_COMMANDS = ("unittest", "pytest")
+LINT_COMMANDS = ("ruff",)
+BUILD_COMMANDS = ("compileall",)
+DEFAULT_CONTAINMENT = object()
 
 # Only these environment variables are passed to commands. Everything else
 # (API keys, tokens, cloud credentials, ...) stays out of the repository's code.
@@ -193,6 +200,9 @@ class CommandResult:
     no_tests_ran: bool = False  # a test command that found nothing to run
     sandbox: str = ""           # where it ran, e.g. "docker (...)"; "" = directly on this machine
     cancelled: bool = False     # stopped because the run was cancelled
+    unavailable: bool = False
+    skipped_tests: int = 0
+    tests_run: Optional[int] = None
 
     @property
     def succeeded(self):
@@ -202,7 +212,8 @@ class CommandResult:
         A cancelled command never counts as a pass: it was killed, so its
         exit code says nothing about whether the tests were going to pass.
         """
-        return (not self.timed_out and not self.cancelled
+        return (not self.timed_out and not self.cancelled and not self.unavailable
+                and not self.skipped_tests
                 and self.exit_code == 0 and not self.no_tests_ran)
 
     def status(self):
@@ -211,10 +222,14 @@ class CommandResult:
             return f"CANCELLED after {self.duration_seconds:.1f}s"
         if self.timed_out:
             return f"TIMED OUT after {self.duration_seconds:.1f}s"
+        if self.unavailable:
+            return "UNAVAILABLE (command could not be run)"
         if self.exit_code is None:
             return "FAILED (command could not be started)"
         if self.no_tests_ran:
             return f"FAILED (no tests were run, exit code {self.exit_code})"
+        if self.skipped_tests:
+            return f"NOT PASSED ({self.skipped_tests} skipped/expected-failure tests)"
         if self.exit_code == 0:
             return "SUCCEEDED (exit code 0)"
         return f"FAILED (exit code {self.exit_code})"
@@ -235,7 +250,7 @@ class CommandResult:
 class ExecutionEnvironment:
     """Runs allowed commands inside one repository, with a timeout."""
 
-    def __init__(self, root, timeout_seconds=30, allowed_commands=None, sandbox=None):
+    def __init__(self, root, timeout_seconds=30, allowed_commands=None, sandbox=DEFAULT_CONTAINMENT):
         """Store the repository root, timeout, the command whitelist and the
         sandbox (None runs commands directly on this machine)."""
         self.root = Path(root).resolve()
@@ -244,8 +259,8 @@ class ExecutionEnvironment:
         if timeout_seconds <= 0:
             raise ExecutionError("timeout_seconds must be greater than 0")
         self.timeout_seconds = timeout_seconds
-        self.allowed_commands = allowed_commands or ALLOWED_COMMANDS
-        self.sandbox = sandbox
+        self.allowed_commands = ALLOWED_COMMANDS if allowed_commands is None else allowed_commands
+        self.sandbox = (DockerSandbox() if allowed_commands is None else None) if sandbox is DEFAULT_CONTAINMENT else sandbox
 
     def available_commands(self):
         """Return the names of the commands that may be run."""
@@ -271,6 +286,11 @@ class ExecutionEnvironment:
             return CommandResult(name, command, None, "",
                                  f"Not started: {cancel.reason}", False, 0.0,
                                  cancelled=True)
+        if name in ALLOWED_COMMANDS and self.sandbox is None:
+            return CommandResult(name, command, None, "",
+                                 "Repository checks require approved contained execution. "
+                                 "Select --sandbox docker and build the sandbox image; "
+                                 "host execution is disabled.", False, 0.0, unavailable=True)
         launch, env, container, where = command, command_env(), None, ""
         if self.sandbox:
             container = f"harness-check-{uuid.uuid4().hex[:12]}"
@@ -291,7 +311,7 @@ class ExecutionEnvironment:
         except OSError as error:
             # For example, the program does not exist.
             return CommandResult(name, command, None, "", f"Could not start command: {error}",
-                                 False, time.monotonic() - start, sandbox=where)
+                                 False, time.monotonic() - start, sandbox=where, unavailable=True)
 
         timed_out = cancelled = False
         try:
@@ -309,7 +329,13 @@ class ExecutionEnvironment:
             kill_process_tree(process)
 
         stopped_early = timed_out or cancelled
-        no_tests = not stopped_early and bool(NO_TESTS_PATTERN.search(stdout + stderr))
+        output = stdout + stderr
+        tests_run, skipped = test_counts(name, output)
+        no_tests = (not stopped_early and name in TEST_COMMANDS
+                    and (tests_run in (None, 0) or bool(NO_TESTS_PATTERN.search(output))))
+        unavailable = (not stopped_early and
+                       (bool(re.search(r"No module named ['\"]?(?:pytest|ruff|unittest|compileall)\b", output))
+                        or (bool(where) and process.returncode in (125, 126, 127))))
         return CommandResult(
             name=name,
             command=command,
@@ -321,6 +347,9 @@ class ExecutionEnvironment:
             no_tests_ran=no_tests,
             sandbox=where,
             cancelled=cancelled,
+            unavailable=unavailable,
+            skipped_tests=skipped,
+            tests_run=tests_run,
         )
 
     def _wait(self, process, container, cancel, start):
@@ -394,3 +423,22 @@ def _to_text(output):
     if isinstance(output, bytes):
         return output.decode("utf-8", errors="replace")
     return output
+
+
+def test_counts(name, output):
+    """Read runner summaries, never infer a passing test from exit code alone."""
+    if name == "unittest":
+        counts = re.findall(r"^Ran (\d+) tests?\b", output, re.MULTILINE)
+        skipped = sum(int(n) for n in re.findall(r"(?:skipped|expected failures|unexpected successes)=(\d+)", output))
+        not_run = sum(int(n) for n in re.findall(r"skipped=(\d+)", output))
+        return (max(0, int(counts[-1]) - not_run) if counts else None), skipped
+    if name == "pytest":
+        # Only the final summary, not arbitrary test output, supplies counts.
+        summaries = [line.strip("= \t") for line in output.splitlines()
+                     if re.search(r"\b\d+ (?:passed|failed|skipped|xfailed|xpassed|error|errors)\b", line)
+                     and re.search(r"\bin \d", line)]
+        summary = summaries[-1] if summaries else ""
+        passed_failed = sum(int(n) for n in re.findall(r"(\d+) (?:passed|failed|error|errors)\b", summary))
+        skipped = sum(int(n) for n in re.findall(r"(\d+) (?:skipped|xfailed|xpassed)\b", summary))
+        return (passed_failed if summary else None), skipped
+    return None, 0

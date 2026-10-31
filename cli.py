@@ -7,7 +7,7 @@ from pathlib import Path
 
 import application
 from config import MODES, SANDBOXES, Config, load_settings
-from execution import ALLOWED_COMMANDS, ExecutionError
+from execution import BUILD_COMMANDS, LINT_COMMANDS, TEST_COMMANDS, ExecutionError
 from projects import HARNESS_DIR, load_projects, validate_root, require_external
 from repository_tools import RepositoryError
 from session import SessionError, SessionStore
@@ -100,7 +100,7 @@ def build_legacy_parser():
     parser.add_argument(
         "--check",
         default="unittest",
-        choices=sorted(ALLOWED_COMMANDS),
+        choices=TEST_COMMANDS,
         help="Which whitelisted test command run_check and verification use "
              "(default: unittest).",
     )
@@ -117,6 +117,10 @@ def build_legacy_parser():
         help="TOML file with limits, timeouts and sandbox settings "
              "(see settings.example.toml).",
     )
+    parser.add_argument('--lint', action='append', choices=LINT_COMMANDS, default=None,
+                        help='Configured final lint check (repeatable).')
+    parser.add_argument('--build', action='append', choices=BUILD_COMMANDS, default=None,
+                        help='Configured final build check (repeatable).')
     return parser
 
 
@@ -182,6 +186,10 @@ def config_from_args(args, parser):
             parser.error(str(error))
     if args.sandbox:  # the command line wins over the settings file
         settings["sandbox"] = args.sandbox
+    for option, key in (('lint', 'lint_checks'), ('build', 'build_checks')):
+        value = getattr(args, option, None)
+        if value is not None:
+            settings[key] = tuple(dict.fromkeys(value))
 
     if args.allowed_projects and not any(
             root == Path(allowed).resolve() for allowed in args.allowed_projects):
@@ -228,12 +236,13 @@ def summary_text(run, verification):
         model_says = run.summary
     else:
         model_says = f"(the model did not finish) {run.summary}"
-    success = run.status == DONE and verification.passed
+    success = verification.task_completed
     return "\n".join([
         f"Run:          {run.status} ({run.counters_text()})",
         f"Stopped:      {run.stopping_rule()}",
         f"Model says:   {model_says}",
         f"Verification: {verification.verdict()}",
+        f"Task status:  {verification.task_status}",
         f"Result:       {'SUCCESS' if success else 'FAILURE'}",
     ])
 
@@ -270,11 +279,15 @@ def build_parser():
     start.add_argument('--acceptance', action='append', default=[], metavar='PATH',
                        help='External acceptance check to save with the task; repeat for several.')
     start.add_argument('--record', metavar='FILE', help='Also save a JSON task record outside the project.')
-    start.add_argument('--check', choices=sorted(ALLOWED_COMMANDS), default='unittest',
+    start.add_argument('--check', choices=TEST_COMMANDS, default='unittest',
                        help='Whitelisted check for the loop and final verification (default: unittest).')
     start.add_argument('--sandbox', choices=SANDBOXES,
                        help='docker (default): contained; none: run checks on this machine.')
     start.add_argument('--settings', metavar='FILE', help='TOML limits, timeouts and sandbox settings.')
+    start.add_argument('--lint', action='append', choices=LINT_COMMANDS,
+                       help='Independent final lint check (also configurable in settings).')
+    start.add_argument('--build', action='append', choices=BUILD_COMMANDS,
+                       help='Independent final build check (also configurable in settings).')
     for name, help_text in (
             ('status', 'Display saved progress without running tools or tests.'),
             ('show', 'Display saved history, results, checks, and diff.'),
@@ -327,11 +340,17 @@ def show_task(saved):
                f'Result: {"SUCCESS" if result["exit_code"] == 0 else "FAILURE"}'
                if result else 'Verification: UNAVAILABLE (no final result saved)'))
     section('Checks', result.get('checks_text') or 'NOT RUN: no final checks saved')
+    for title, key in (('Tests', 'tests_text'), ('Lint', 'lint_text'), ('Build', 'build_text')):
+        section(title, result.get(key) or 'UNAVAILABLE: no separate result saved')
     section('Changed Files', '\n'.join(result.get('changed_files', saved.checkpoint.changed_files))
             or '(no changes recorded)')
-    section('Diff', (f'UNAVAILABLE: {result["git_problem"]}' if result.get('git_problem')
+    section('Diff', result.get('diff_text') or (f'UNAVAILABLE: {result["git_problem"]}' if result.get('git_problem')
                      else result.get('diff', '').rstrip() or
                      ('(no changes)' if result else 'UNAVAILABLE: no final diff saved; use --live-diff')))
+    section('Unfinished work / remaining problems', result.get('unfinished_text') or
+            'UNAVAILABLE: no final assessment saved; inspect the saved progress and history')
+    if result.get('task_status'):
+        print(f'Final task status: {result["task_status"]}')
 
 
 def report_run(config, outcome):
@@ -339,7 +358,10 @@ def report_run(config, outcome):
     section('Actions', run.record.actions_text() if run.record else '(not recorded)')
     section('Changed Files', verification.changed_files_text())
     section('Checks', verification.checks_text())
+    for title, category in (('Tests', 'tests'), ('Lint', 'lint'), ('Build', 'build')):
+        section(title, verification.checks_text(category))
     section('Diff', verification.diff_text())
+    section('Unfinished work / remaining problems', verification.unfinished_text())
     section('Summary', summary_text(run, verification))
     if config.record_path:
         print(f'\nTask record written to {config.record_path}')

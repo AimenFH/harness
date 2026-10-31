@@ -26,7 +26,7 @@ OFFLINE_SCRIPT = [
 # Saved independently of permission-bearing task fields. Resume restores these
 # operational settings; permissions and limits always come from the TaskSpec.
 RUN_SETTINGS = ("model", "ollama_url", "model_timeout_seconds", "num_ctx",
-                "sandbox", "sandbox_image")
+                "sandbox", "sandbox_image", "lint_checks", "build_checks")
 
 
 def build_model(config):
@@ -74,7 +74,7 @@ class TaskOutcome:
     def exit_code(self):
         if self.run.status == CANCELLED:
             return 130
-        return 0 if self.run.status == DONE and self.verification.passed else 1
+        return 0 if self.verification.task_completed else 1
 
 
 def validate_config(config):
@@ -204,7 +204,8 @@ def _execute(config, tools, navigator, session, store, sandbox, model_factory, l
         if store:
             session.status = "verifying"
             store.save(session)  # Final checks are still part of the active task.
-        verification = Verifier(config.root, config.final_checks,
+        final_checks = tuple(dict.fromkeys(config.final_checks + tuple(config.lint_checks) + tuple(config.build_checks)))
+        verification = Verifier(config.root, final_checks,
                                 config.command_timeout_seconds, sandbox=sandbox).verify(cancel=cancel)
         if cancel.cancelled:
             run.status = CANCELLED
@@ -216,6 +217,7 @@ def _execute(config, tools, navigator, session, store, sandbox, model_factory, l
                 session.summary = run.summary
         elif session:
             session.status = run.status
+        verification.assess_task(run, controller.spec)
     outcome = TaskOutcome(run, verification)
     if store:
         session.result = {
@@ -224,6 +226,14 @@ def _execute(config, tools, navigator, session, store, sandbox, model_factory, l
             "checks_text": verification.checks_text(),
             "changed_files": verification.changed_files, "diff": verification.diff,
             "git_problem": verification.git_problem,
+            "tests_text": verification.checks_text('tests'),
+            "lint_text": verification.checks_text('lint'),
+            "build_text": verification.checks_text('build'),
+            "diff_text": verification.diff_text(),
+            "task_status": verification.task_status,
+            "unfinished_work": verification.unfinished_work,
+            "remaining_problems": verification.problems,
+            "unfinished_text": verification.unfinished_text(),
         }
         store.save(session)
     if config.record_path and run.record:

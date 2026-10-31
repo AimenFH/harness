@@ -117,12 +117,13 @@ def test_timeout_removes_the_container(tmp_path):
     assert "Sandbox: fake" in result.report()
 
 
-def test_without_sandbox_the_report_says_so(tmp_path):
+def test_without_sandbox_repository_execution_is_refused(tmp_path):
     root = make_repo(tmp_path, "import unittest\nclass T(unittest.TestCase):\n"
                                "    def test_ok(self): pass\n")
-    result = ExecutionEnvironment(root).run("unittest")
+    result = ExecutionEnvironment(root, sandbox=None).run("unittest")
 
-    assert "Sandbox: none (ran directly on this machine)" in result.report()
+    assert result.unavailable and not result.succeeded
+    assert "host execution is disabled" in result.stderr
 
 
 # ----- real containers (skipped without Docker and the image) ------------------

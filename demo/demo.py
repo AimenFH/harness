@@ -105,6 +105,8 @@ def run_tests(pytest_args, mounts=()):
     cleanup and (with Docker) the same container limits apply.
     """
     sandbox = None
+    if SANDBOX != "docker":
+        raise ExecutionError("Target checks require --sandbox docker; host execution is disabled")
     if SANDBOX == "docker":
         sandbox = DockerSandbox(DEFAULT_SANDBOX_IMAGE, mounts=mounts)
         try:

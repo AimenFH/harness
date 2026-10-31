@@ -15,7 +15,7 @@ import sys
 import pytest
 
 import main
-from execution import command_env
+from execution import PYTHON, DockerSandbox, ExecutionEnvironment
 from model_client import ScriptedModelClient
 from tests.helpers import commit_all, write_repo
 
@@ -79,13 +79,12 @@ def setup(tmp_path):
 
 
 def run_acceptance(root, acceptance_file):
-    """Run the acceptance check as a separate process inside the target copy."""
-    done = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(acceptance_file)],
-        cwd=root, capture_output=True, text=True, timeout=60,
-        env=command_env(),  # same reduced environment the harness uses
-    )
-    return done.returncode, done.stdout + done.stderr
+    """Keep the acceptance check outside the writable copy and run it contained."""
+    sandbox = DockerSandbox(mounts=[(acceptance_file.parent, '/acceptance')])
+    done = ExecutionEnvironment(root, 60, allowed_commands={
+        'acceptance': [PYTHON, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
+                       f'/acceptance/{acceptance_file.name}']}, sandbox=sandbox).run('acceptance')
+    return done.exit_code, done.stdout + done.stderr
 
 
 def test_bug_fix_flow(setup, monkeypatch, capsys):
@@ -107,7 +106,7 @@ def test_bug_fix_flow(setup, monkeypatch, capsys):
     ]
     monkeypatch.setattr(main, "build_model", lambda config: ScriptedModelClient(replies))
     exit_code = main.main(["--root", str(root), "--task", "Apply the order discount",
-                           "--mode", "edit", "--model", "scripted", "--sandbox", "none"])
+                           "--mode", "edit", "--model", "scripted", "--sandbox", "docker"])
     report = capsys.readouterr().out
 
     assert "denied: Access denied: '../acceptance/acceptance_discount.py' is outside" in report

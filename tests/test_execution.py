@@ -54,7 +54,7 @@ def test_successful_command(tmp_path):
     assert result.exit_code == 0
     assert result.timed_out is False
     assert "OK" in result.stderr  # unittest writes its summary to stderr
-    assert f"cwd={root.resolve()}" in result.stdout  # ran inside the repo
+    assert "cwd=/work" in result.stdout  # the read-only repository mount
     assert result.status() == "SUCCEEDED (exit code 0)"
 
 

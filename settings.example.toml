@@ -17,6 +17,10 @@ max_retries = 3               # malformed or denied requests in a row before sto
 max_output_chars = 10000      # longer tool output is cut and marked [OUTPUT TRUNCATED]
 command_timeout_seconds = 30  # per check; the check and all its processes are then killed
 
-# Where checks run: "docker" (contained) or "none" (directly on this machine, NOT contained)
+# Optional independent final checks (fixed commands only, inside Docker).
+lint_checks = []               # ["ruff"] to check Python lint
+build_checks = []              # ["compileall"] to check Python compilation
+
+# "none" retains inspection/editing but makes all repository checks unavailable.
 sandbox = "docker"
 sandbox_image = "harness-sandbox"

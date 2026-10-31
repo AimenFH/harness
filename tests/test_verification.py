@@ -42,7 +42,7 @@ def test_changed_and_new_files_are_reported_with_diff(repo):
     assert result.changed_files == ["M hello.py", "?? tests/test_student.py"]
     assert '-    return "hello"' in result.diff
     assert '+    return "hello!"' in result.diff
-    assert "+++ b/tests/test_student.py\n+# a new test file" in result.diff
+    assert "+++ b/tests/test_student.py\n@@ -0,0 +1 @@\n+# a new test file" in result.diff
 
 
 def test_failed_check_is_shown_with_its_output(repo):
@@ -78,7 +78,7 @@ def test_missing_git_program_is_unavailable(repo):
     result = Verifier(repo, git="git-program-that-does-not-exist").verify()
 
     assert "UNAVAILABLE" in result.changed_files_text()
-    assert "could not be started" in result.changed_files_text()
+    assert "Could not start command" in result.changed_files_text()
 
 
 def test_unknown_check_is_reported_as_failed_not_skipped(repo):
@@ -117,7 +117,7 @@ def test_only_changes_inside_root_are_reported(tmp_path):
 def run_main(monkeypatch, capsys, repo, replies):
     monkeypatch.setattr(main, "build_model", lambda config: ScriptedModelClient(replies))
     exit_code = main.main(["--root", str(repo), "--task", "Fix it",
-                           "--mode", "edit", "--model", "fake", "--sandbox", "none"])
+                           "--mode", "edit", "--model", "fake", "--sandbox", "docker"])
     return exit_code, capsys.readouterr().out
 
 
