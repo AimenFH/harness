@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from cancellation import CancelledError
 from execution import CommandResult, ExecutionError
 from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_messages,
                           validate_tool_call)
@@ -152,6 +153,14 @@ class Controller:
         self.repeats = 0             # denied requests to repeat a failed action
         self.partly_read = set()     # files the model has only seen truncated
         self.read_files = set()      # files the model has seen in full this run
+        # Fresh run state, so execute() and check_permission() also work when
+        # they are called directly rather than through run().
+        self.counters = Counters()
+        self.changed_files = []
+        self.last_check = None
+        self.checked_since_edit = False
+        self.step = 0
+        self.record = TaskRecord(spec=self.spec)
 
         if config.check_command not in executor.available_commands():
             raise ValueError(f"Unknown check_command {config.check_command!r}")
@@ -255,7 +264,12 @@ class Controller:
 
             # 1. Ask the model what to do next.
             try:
-                action = self.model.request_action(messages)
+                action = self.model.request_action(messages, self.cancel)
+            except CancelledError as error:
+                # Cancelled while waiting for the model. Whatever it was about
+                # to say is discarded: a late reply cannot start an action.
+                return self._stop(CANCELLED, f"Stopped: {error.reason}. The model "
+                                             "request was abandoned and no action ran.")
             except ModelError as error:
                 # Record it too: the brief expects a reopened session to show
                 # its errors, and this one is why the run ended.
@@ -366,6 +380,11 @@ class Controller:
 
     def check_permission(self, action):
         """Return a reason if `action` must be refused, otherwise None."""
+        if self.cancel is not None and self.cancel.cancelled:
+            # Belt and braces: the loop already stops on cancellation, but if
+            # anything reaches here afterwards it must not touch a file.
+            return (f"Permission denied: the run was cancelled ({self.cancel.reason}). "
+                    "No further action is executed.")
         try:
             validate_tool_call(action.tool, action.arguments)
         except InvalidActionError as error:
@@ -525,7 +544,7 @@ class Controller:
             self.changed_files.append(path)
 
     def _run_check(self, name=None):
-        result = self.executor.run(name or self.config.check_command)
+        result = self.executor.run(name or self.config.check_command, cancel=self.cancel)
         self.last_check = result  # keeps the FULL output, even if truncated below
         self.checked_since_edit = result.succeeded
         self.log(f"    {result.status()}")
@@ -564,7 +583,8 @@ class Controller:
 
     # ----- sessions ----------------------------------------------------------
 
-    def _checkpoint(self, messages, rejected_in_a_row, pending=None, status=None):
+    def _checkpoint(self, messages, rejected_in_a_row, pending=None, status=None,
+                    keep_pending=False):
         """Save the run's state, durably and atomically. Does nothing without a store.
 
         Called twice per step: once naming the action about to run (`pending`),
@@ -592,7 +612,8 @@ class Controller:
                         if self.last_check is not None else None),
             branch=branch, commit=commit, dirty=dirty,
             pending=({"step": self.counters.actions, "tool": pending.tool,
-                      "arguments": dict(pending.arguments)} if pending else None),
+                      "arguments": dict(pending.arguments)} if pending
+                     else (self.session.checkpoint.pending if keep_pending else None)),
         )
         self.session.actions = list(self.record.actions)
         if status:
@@ -614,7 +635,10 @@ class Controller:
             record.finish(status, summary)
         if self.session is not None and self.store is not None:
             self.session.summary = summary
-            self._checkpoint(list(self.session.checkpoint.messages), 0, status=status)
+            # Keep any action still marked pending: stopping must never turn an
+            # unknown outcome into a known one.
+            self._checkpoint(list(self.session.checkpoint.messages), 0, status=status,
+                             keep_pending=True)
         return RunResult(status, summary, self.counters, self.config.max_actions,
                          list(self.changed_files), self.last_check, record,
                          self.session)

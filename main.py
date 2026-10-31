@@ -11,9 +11,11 @@ model claimed, and the results are printed in sections.
 """
 
 import argparse
+import signal
 import sys
 from pathlib import Path
 
+from cancellation import AnyCancel, CancelFile, CancelToken
 from config import (MAX_ACTIONS, MAX_OUTPUT_CHARS, MAX_RETRIES, MODES, SANDBOXES,
                     Config, load_settings)
 from controller import DONE, Controller
@@ -21,7 +23,8 @@ from execution import ALLOWED_COMMANDS, DockerSandbox, ExecutionEnvironment, Exe
 from model_client import ModelClient, ScriptedModelClient
 from navigation import RepositoryNavigator
 from repository_tools import RepositoryError, RepositoryTools
-from session import Session, SessionError, SessionStore, check_resume, new_session_id
+from session import (FINISHED, Session, SessionError, SessionStore, check_resume,
+                     new_session_id)
 from task_record import ScopeError, spec_from_config
 from verification import Verifier
 
@@ -254,6 +257,47 @@ def summary_text(run, verification):
     ])
 
 
+def cancel_parser():
+    parser = argparse.ArgumentParser(
+        prog="main.py --cancel",
+        description="Cancel a running task from another process.")
+    parser.add_argument("--cancel", required=True, metavar="ID",
+                        help="Session id of the run to cancel.")
+    parser.add_argument("--session-dir", required=True, metavar="DIR", dest="session_dir")
+    parser.add_argument("--reason", default="cancelled by the user",
+                        help="Why it is being cancelled; shown in the run's output.")
+    return parser
+
+
+def cancel(argv):
+    """Ask a running task to stop, from a second CLI process.
+
+    This writes a small file next to the session. The running process notices
+    it within a fraction of a second -- between steps, while waiting for the
+    model, or while a command is running -- stops, cleans up, and saves its
+    state. Cancelling the same task twice is harmless, and so is cancelling one
+    that has already finished.
+    """
+    args = cancel_parser().parse_args(argv)
+    store = SessionStore(args.session_dir)
+    try:
+        saved = store.load(args.cancel)
+    except SessionError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+
+    path = CancelFile(args.session_dir, args.cancel).request(args.reason)
+    print(f"Cancellation requested for {args.cancel}: {args.reason}")
+    print(f"Flag written to {path}")
+    if saved.status in FINISHED:
+        print(f"Note: that session already finished with status {saved.status!r}; "
+              "nothing was running.")
+    else:
+        print("The running process will stop at its next check "
+              "(between steps, or while waiting for the model or a command).")
+    return 0
+
+
 def resume_parser():
     """Options for reopening a saved session instead of starting a new task."""
     parser = argparse.ArgumentParser(
@@ -356,6 +400,9 @@ def resume(argv):
         print("\n--dry-run: nothing was executed.")
         return 0
 
+    # The flag that stopped this run last time must not stop it again at once.
+    CancelFile(args.session_dir, session.id).clear()
+
     sandbox = build_sandbox(config)
     if sandbox:
         try:
@@ -369,10 +416,39 @@ def resume(argv):
         executor=ExecutionEnvironment(config.root, config.command_timeout_seconds,
                                       sandbox=sandbox),
         navigator=navigator, spec=session.spec, session=session, store=store,
+        cancel=build_cancel(config, session),
     )
     section("Progress")
     run = controller.resume(session)
     return report_run(config, run, sandbox)
+
+
+def build_cancel(config, session):
+    """The cancel sources for one run, and the SIGINT handler that uses them.
+
+    Two sources, combined: a CancelToken for Ctrl+C in this terminal, and -- when
+    the run is saved as a session -- a CancelFile another process can create with
+    `--cancel <id>`. Ctrl+C is handled rather than left to raise, so the first
+    press asks the run to stop cleanly (saving its state and cleaning up) and a
+    second press still aborts the hard way.
+    """
+    token = CancelToken()
+    sources = [token]
+    if session is not None and config.session_dir:
+        sources.append(CancelFile(config.session_dir, session.id))
+
+    def on_interrupt(signum, frame):
+        if token.cancelled:          # second Ctrl+C: give up waiting for a clean stop
+            raise KeyboardInterrupt
+        token.cancel("cancelled with Ctrl+C")
+        print("\nCancelling: finishing the current step, then stopping. "
+              "Press Ctrl+C again to abort immediately.", file=sys.stderr)
+
+    try:
+        signal.signal(signal.SIGINT, on_interrupt)
+    except (ValueError, OSError):
+        pass        # not the main thread, or no signals here: Ctrl+C just raises
+    return AnyCancel(*sources)
 
 
 def report_run(config, run, sandbox):
@@ -407,6 +483,8 @@ def main(argv=None):
     # Two alternative entry points that do not start a new task.
     if "--list-sessions" in argv:
         return list_sessions(argv)
+    if "--cancel" in argv:
+        return cancel(argv)
     if "--resume" in argv:
         return resume(argv)
 
@@ -447,6 +525,7 @@ def main(argv=None):
         spec=spec,
         session=session,
         store=store,
+        cancel=build_cancel(config, session),
     )
     section("Progress")
     run = controller.run(config.task, config.context_files)

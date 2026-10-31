@@ -9,7 +9,7 @@ This file records each phase: what was checked or built, test results, and open 
 | 2 | Navigation (symbols, dependencies, Git state) | **done** |
 | 3 | Context management (repo map, file selection, bounded history) | **not started** (skipped for now) |
 | 4 | Task record, scope enforcement, action log, stopping rules | **done** |
-| 5 | Cancellation | **partly** — stops between steps; not yet mid-request/mid-command |
+| 5 | Cancellation (from another process, mid-request, mid-command) | **done** |
 | 6 | Session storage and safe resume | **done** |
 | 7 | Verification extras (lint/build checks, unfinished work) + check loop | planned |
 | 8 | CLI subcommands, allowed projects, interface/core split | planned |
@@ -805,3 +805,172 @@ The action log from the resumed run shows the interrupted step for what it was:
   digest rather than by the list.
 - Resume rebuilds the check result from its status line only, so the resumed
   model cannot re-read the old failure output. It is told the status, not the text.
+
+---
+
+## Phase 5 — Cancellation (2026-10-31)
+
+Covers the brief's **S3** and its test **X4**, which asks for one representative
+cancellation during a model request *or* a command. Both are covered, plus the
+harder requirement the prompt added: cancelling from **another CLI process**.
+
+### Why a file, not a signal
+
+Ctrl+C only reaches the terminal you are sitting in front of. A long run may be
+in another terminal, started by a script, or left going while you do something
+else. So cancellation goes through a small file next to the session:
+
+```bash
+terminal 1:  python main.py --root ... --session-dir ~/sessions ...
+terminal 2:  python main.py --cancel <id> --session-dir ~/sessions
+```
+
+A file needs no daemon, no port and no privileges, it works when the two
+processes share no memory, and it survives either of them dying. Ctrl+C is kept
+as a convenience on top (one press asks for a clean stop, a second aborts), but
+nothing depends on it — `cancellation.py` contains no `SIGINT` and no
+`KeyboardInterrupt`, which `test_cancellation_does_not_depend_on_ctrl_c` asserts.
+
+### New module `cancellation.py`
+
+| Part | Role |
+|---|---|
+| `CancelToken` | In-process cancellation, for the Ctrl+C handler and tests. |
+| `CancelFile` | Cross-process: `request()` writes the flag (atomically, via a temp file plus `os.replace`), `cancelled` polls for it, `reason` reads it back, `clear()` removes it. |
+| `AnyCancel` | Cancelled as soon as any source is; reports the reason of the one that fired. A run normally has a token *and* a file. |
+| `wait_for()` | A poll loop that raises `CancelledError` — a blocking call cannot be interrupted by a file appearing on disk, so every wait is a poll. |
+
+**Everything latches.** The first time a source reports cancelled it keeps
+reporting cancelled, even if the file is deleted. A run must not quietly come
+back to life, and a late model reply must not be able to start another action.
+`clear()` is only for a *resumed* run, so the flag that stopped it last time does
+not stop it again immediately.
+
+### Where cancellation is noticed
+
+| Point | How |
+|---|---|
+| Between steps | `Controller._loop` checks before asking the model |
+| **During a model request** | `ModelClient._chat_cancellable` runs the request in a daemon thread and polls the cancel source while it waits |
+| **During a command** | `ExecutionEnvironment._wait` polls every 0.25 s instead of one blocking `communicate`; on cancel it kills the process group and force-removes the Docker container |
+| Before a command starts | `run()` refuses to start a process at all if the run is already cancelled |
+| At the permission gate | `check_permission` denies every tool once cancelled, so no write can slip through |
+
+### The model request: honest about what is interrupted
+
+A local model cannot be told "never mind" — there is no way to abort a
+generation already running in Ollama. So the request runs in a **daemon thread**
+and, on cancellation, is *abandoned* rather than waited for:
+
+- the harness stops within `POLL_SECONDS` instead of after a possibly very long
+  generation,
+- the thread cannot hold the process open, because it is a daemon,
+- and its result is dropped on the floor — nothing ever reads it.
+
+That last point is the requirement "prevent delayed model responses from
+triggering new actions", and it is what
+`test_a_late_model_reply_cannot_start_an_action` proves: the blocked reply is an
+`edit_file`, the run is cancelled, the reply is then released, and the file is
+still untouched. The socket itself is left to its own timeout in the abandoned
+thread; it can affect nothing.
+
+### Two real bugs this phase found and fixed
+
+**A command could start after cancellation.** `ExecutionEnvironment.run()` only
+checked the cancel source *while waiting*, so a command whose process started
+before the first poll ran to completion — and a fast command could finish and be
+reported as a clean pass on an already-cancelled run. It now refuses to start the
+process at all when the run is cancelled, and a cancelled `CommandResult` never
+counts as `succeeded`.
+
+**Stopping cleared a pending action.** `_stop()` wrote a final checkpoint with
+`pending=None`, which would turn a genuinely unknown outcome into an apparently
+clean one and defeat the Phase 6 uncertainty mechanism. It now passes
+`keep_pending=True`: stopping never invents certainty.
+(`test_stopping_does_not_clear_a_pending_action`.)
+
+A third, smaller fix: the controller's run state (`counters`, `record`, ...) only
+existed after `run()`, so calling `execute()` directly crashed in `_deny`. It is
+now initialised in `__init__`.
+
+### Cancelled is not the same as uncertain
+
+Worth stating plainly, because the first draft of these tests got it wrong. A
+*cooperative* cancellation always lets the current action return, so its outcome
+is **known**: the command was killed, the kill was observed, and `CANCELLED` is
+written down. That must not be dressed up as an unknown outcome.
+
+Real uncertainty needs a **hard kill**, where nobody gets to record anything —
+that is the `pending` mechanism from Phase 6, tested in `test_sessions.py`. The
+two are deliberately different, and both are now tested for what they actually
+are.
+
+### Files
+
+| File | Change |
+|---|---|
+| `cancellation.py` | **new** — `CancelToken`, `CancelFile`, `AnyCancel`, `wait_for`, `CancelledError` |
+| `model_client.py` | `request_action(messages, cancel=None)`; `_chat_cancellable` worker thread; `Blocked` scripted reply for deterministic tests |
+| `execution.py` | `run(name, cancel=None)`; `_wait` poll loop; refuses to start when cancelled; `CommandResult.cancelled`, excluded from `succeeded`, shown in `status()` |
+| `controller.py` | passes the cancel source to the model and to `run_check`; `CancelledError` → `CANCELLED`; denies every tool once cancelled; run state initialised in `__init__`; `_stop(keep_pending=True)` |
+| `task_record.py` | `CancelToken` moved to `cancellation.py` and re-exported |
+| `main.py` | `--cancel ID --session-dir DIR [--reason ...]`; `build_cancel()` combining the token and the file plus the SIGINT handler; a resumed run clears the stale flag |
+| `tests/test_cancellation.py` | **new** — 25 tests |
+| `tests/helpers.py`, `tests/test_controller.py` | test doubles updated for the new signatures |
+| `.idea/runConfigurations/Cancellation_tests.xml` | **new** |
+
+### Tests (`tests/test_cancellation.py`, 25 tests)
+
+Deterministic, with no live model and no timing guesswork: a model request is
+blocked with `model_client.Blocked` (which waits exactly where a real request
+would), a command is a real subprocess that sleeps *and spawns a child*, and
+Docker is a `FakeSandbox` recording its `stop()` calls.
+
+| Section | What is checked |
+|---|---|
+| Cancel sources | token latches and keeps the first reason; a file written by one object is seen by another; requesting twice is safe and leaves no temp file; a noticed cancellation cannot be undone; `clear()` lets a fresh reader start again; `AnyCancel` reports the source that fired; `wait_for` timeout vs cancel |
+| Blocked model request | a blocked request is cancelled and touches nothing; **a late reply cannot start an action**; cancelling first asks the model nothing |
+| Running command | the command **and its child** are killed (verified with `pgrep`), well before the timeout; a cancelled command is never a passing check; the plain timeout still works without a cancel source |
+| Docker | the container is force-removed on cancel; a repeated removal is safe |
+| No further writes | nothing is edited after cancellation; an edit reaching the gate afterwards is denied |
+| Persisted state | the cancelled status, summary, actions and counters survive into a fresh store; a mid-command cancellation records `CANCELLED`; `_stop` keeps a pending action |
+| Repeated cancellation | five cancellations and a second `run()` are both safe |
+| **Another process** | a real second OS process (`main.py --cancel`) stops a real first one; the queued edit never happens; the child process is gone; the state is saved |
+| Not Ctrl+C | `cancellation.py` contains no `SIGINT`/`KeyboardInterrupt` |
+
+### Results
+
+```
+python -m pytest -q tests/test_cancellation.py  ->  25 passed
+python -m pytest -q                             ->  315 passed (290 + 25), 0 skipped
+demo.py rehearse + verify (Stage 1 demo)        ->  SUCCESS; acceptance / regression / scope PASS
+```
+
+Verified by hand with two real terminals, a run whose check hangs and spawns a
+child, and a third `sleep` for good measure:
+
+```
+process 1   [1] read_file hello.py
+            [2] run_check            <- blocked, 3 processes alive
+process 2   python main.py --cancel 20261031-193556-3d797d32 --session-dir ...
+            Cancellation requested: cancelled from another terminal
+process 1       CANCELLED after 0.8s
+            Stopped: cancelled from another terminal. No further actions were executed.
+```
+
+Afterwards: `pgrep sleep 600` → **0** (all three gone), `hello.py` unchanged
+(the `edit_file` that was next in the script never ran), and the session saved
+with status `cancelled`.
+
+### Known limits
+
+- The Ollama HTTP request is abandoned, not aborted at the socket. Ollama keeps
+  generating until it finishes and the daemon thread then discards the answer.
+  Cancellation is immediate from the harness's side and nothing can act on a
+  late reply, but the local model does keep burning CPU for a while.
+- Cancellation is checked between steps and inside the two waits, so the
+  granularity is `POLL_SECONDS` (0.25 s) plus however long one already-running
+  tool call takes to return. A file write is not interrupted half way — which is
+  deliberate, since a half-written file is worse than a finished one.
+- `--cancel` needs `--session-dir`: a run started without one has no id and
+  nothing to address, so only Ctrl+C can stop it.

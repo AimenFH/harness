@@ -25,6 +25,10 @@ import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+# CancelToken lives in cancellation.py with the other cancel sources;
+# it is re-exported here because it was first introduced with the task record.
+from cancellation import CancelToken  # noqa: F401
+
 # Outcomes of one model reply. OK/DENIED/FAILED mirror controller.py;
 # MALFORMED covers a reply that was not a valid action at all.
 OK = "ok"
@@ -244,30 +248,6 @@ class TaskRecord:
                        summary=data.get("summary", ""))
         except (KeyError, TypeError) as error:
             raise ValueError(f"task record {path} is missing {error}") from None
-
-
-class CancelToken:
-    """A stop request the controller checks between steps.
-
-    Nothing in the harness polls this in a thread; whoever wants the run to
-    stop (a signal handler, a test, a later session command) calls cancel().
-    The controller checks it at the top of every iteration, so no further
-    model call and no further tool ever runs after a cancellation.
-    """
-
-    def __init__(self):
-        self._reason = None
-
-    def cancel(self, reason="cancelled by the user"):
-        self._reason = reason
-
-    @property
-    def cancelled(self):
-        return self._reason is not None
-
-    @property
-    def reason(self):
-        return self._reason or ""
 
 
 # ----- helpers ----------------------------------------------------------------

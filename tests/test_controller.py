@@ -165,7 +165,7 @@ def test_path_outside_repository_is_denied(repo):
 
 def test_fatal_model_error_stops_the_loop(repo):
     class BrokenModel:
-        def request_action(self, messages):
+        def request_action(self, messages, cancel=None):
             raise ModelError("Cannot connect to Ollama")
 
     h = make_harness(repo, [])

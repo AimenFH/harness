@@ -76,9 +76,9 @@ class SpyExecutor(ExecutionEnvironment):
         super().__init__(*args, **kwargs)
         self.calls = []
 
-    def run(self, name):
+    def run(self, name, cancel=None):
         self.calls.append(name)
-        return super().run(name)
+        return super().run(name, cancel=cancel)
 
 
 def make_harness(root, replies, mode="edit", spec=None, cancel=None,

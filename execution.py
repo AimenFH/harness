@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from cancellation import POLL_SECONDS
+
 # The Python running the harness. Using it instead of a bare "python3"
 # works on every OS and inside a virtual environment.
 PYTHON = sys.executable
@@ -166,6 +168,17 @@ class ExecutionError(Exception):
     """A command request was refused (for example, it is not allowed)."""
 
 
+class _Stopped(Exception):
+    """Internal: the command was killed, by the timeout or by a cancellation."""
+
+    def __init__(self, timed_out=False, cancelled=False, stdout="", stderr=""):
+        super().__init__("command stopped")
+        self.timed_out = timed_out
+        self.cancelled = cancelled
+        self.stdout = stdout
+        self.stderr = stderr
+
+
 @dataclass
 class CommandResult:
     """Everything we know about one finished (or killed) command."""
@@ -179,15 +192,23 @@ class CommandResult:
     duration_seconds: float
     no_tests_ran: bool = False  # a test command that found nothing to run
     sandbox: str = ""           # where it ran, e.g. "docker (...)"; "" = directly on this machine
+    cancelled: bool = False     # stopped because the run was cancelled
 
     @property
     def succeeded(self):
         """True only if the command finished on its own with exit code 0
-        and (for test commands) actually ran at least one test."""
-        return not self.timed_out and self.exit_code == 0 and not self.no_tests_ran
+        and (for test commands) actually ran at least one test.
+
+        A cancelled command never counts as a pass: it was killed, so its
+        exit code says nothing about whether the tests were going to pass.
+        """
+        return (not self.timed_out and not self.cancelled
+                and self.exit_code == 0 and not self.no_tests_ran)
 
     def status(self):
         """Return a short, unambiguous one-line status."""
+        if self.cancelled:
+            return f"CANCELLED after {self.duration_seconds:.1f}s"
         if self.timed_out:
             return f"TIMED OUT after {self.duration_seconds:.1f}s"
         if self.exit_code is None:
@@ -230,14 +251,26 @@ class ExecutionEnvironment:
         """Return the names of the commands that may be run."""
         return sorted(self.allowed_commands)
 
-    def run(self, name):
-        """Run the configured command called `name` and return a CommandResult."""
+    def run(self, name, cancel=None):
+        """Run the configured command called `name` and return a CommandResult.
+
+        With `cancel`, the wait is a poll loop instead of one blocking call, so
+        a cancellation from another process is noticed while the command is
+        still running. On cancel the command and every process it started are
+        killed, and a Docker container is force-removed, exactly as on timeout.
+        """
         if name not in self.allowed_commands:
             raise ExecutionError(
                 f"Command {name!r} is not allowed. "
                 f"Allowed commands: {', '.join(self.available_commands())}"
             )
         command = list(self.allowed_commands[name])
+        if cancel is not None and cancel.cancelled:
+            # Already cancelled: do not start the process at all. A command
+            # that begins after a cancellation could still write to the repo.
+            return CommandResult(name, command, None, "",
+                                 f"Not started: {cancel.reason}", False, 0.0,
+                                 cancelled=True)
         launch, env, container, where = command, command_env(), None, ""
         if self.sandbox:
             container = f"harness-check-{uuid.uuid4().hex[:12]}"
@@ -260,14 +293,12 @@ class ExecutionEnvironment:
             return CommandResult(name, command, None, "", f"Could not start command: {error}",
                                  False, time.monotonic() - start, sandbox=where)
 
-        timed_out = False
+        timed_out = cancelled = False
         try:
-            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill_process_tree(process)
-            self._stop_container(container)  # killing the docker client does not stop it
-            stdout, stderr = _collect_after_kill(process)
+            stdout, stderr = self._wait(process, container, cancel, start)
+        except _Stopped as stopped:
+            timed_out, cancelled = stopped.timed_out, stopped.cancelled
+            stdout, stderr = stopped.stdout, stopped.stderr
         except BaseException:
             # E.g. Ctrl+C: don't leave the command running behind us.
             kill_process_tree(process)
@@ -277,18 +308,47 @@ class ExecutionEnvironment:
             # Also remove anything the command left running in the background.
             kill_process_tree(process)
 
-        no_tests = not timed_out and bool(NO_TESTS_PATTERN.search(stdout + stderr))
+        stopped_early = timed_out or cancelled
+        no_tests = not stopped_early and bool(NO_TESTS_PATTERN.search(stdout + stderr))
         return CommandResult(
             name=name,
             command=command,
-            exit_code=None if timed_out else process.returncode,
+            exit_code=None if stopped_early else process.returncode,
             stdout=stdout,
             stderr=stderr,
             timed_out=timed_out,
             duration_seconds=time.monotonic() - start,
             no_tests_ran=no_tests,
             sandbox=where,
+            cancelled=cancelled,
         )
+
+    def _wait(self, process, container, cancel, start):
+        """Wait for the command, checking `cancel` while it runs.
+
+        Raises _Stopped when the command had to be killed, either because the
+        timeout ran out or because the run was cancelled. In both cases the
+        process group is killed and a Docker container is force-removed, so
+        nothing is left running and nothing can write to the repository after
+        this returns.
+        """
+        deadline = start + self.timeout_seconds
+        while True:
+            slice_seconds = self.timeout_seconds if cancel is None else POLL_SECONDS
+            try:
+                return process.communicate(timeout=slice_seconds)
+            except subprocess.TimeoutExpired:
+                pass
+            if cancel is not None and cancel.cancelled:
+                kill_process_tree(process)
+                self._stop_container(container)   # killing the client does not stop it
+                stdout, stderr = _collect_after_kill(process)
+                raise _Stopped(cancelled=True, stdout=stdout, stderr=stderr)
+            if time.monotonic() >= deadline:
+                kill_process_tree(process)
+                self._stop_container(container)
+                stdout, stderr = _collect_after_kill(process)
+                raise _Stopped(timed_out=True, stdout=stdout, stderr=stderr)
 
     def _stop_container(self, container):
         if self.sandbox and container:

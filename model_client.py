@@ -12,10 +12,12 @@ and how to carry out the action is the controller's job.
 
 import copy
 import json
+import threading
 from dataclasses import dataclass, field
 
 import requests
 
+from cancellation import CancelledError, wait_for
 from config import OllamaSettings
 
 # Tool name -> {argument name: required?}. All argument values are strings.
@@ -268,15 +270,62 @@ class ModelClient:
         """Store how to reach Ollama (URL, model name, timeout)."""
         self.settings = settings
 
-    def request_action(self, messages):
+    def request_action(self, messages, cancel=None):
         """Ask the model for its next action.
 
-        Raises ModelError if Ollama cannot be used, or InvalidActionError if
-        the model's reply is not a valid action.
+        Raises ModelError if Ollama cannot be used, InvalidActionError if the
+        model's reply is not a valid action, or CancelledError if the run was
+        cancelled while waiting.
         """
-        return parse_action(self.chat(messages))
+        return parse_action(self.chat(messages, cancel))
 
-    def chat(self, messages):
+    def chat(self, messages, cancel=None):
+        """Send `messages` to Ollama and return the reply text.
+
+        Without `cancel` this blocks until Ollama answers. With `cancel`, the
+        request runs in a worker thread and this polls the cancel source while
+        it waits, so a cancellation from another process is noticed within
+        POLL_SECONDS instead of after a possibly very long generation.
+        """
+        if cancel is None:
+            return self._chat(messages)
+        return self._chat_cancellable(messages, cancel)
+
+    def _chat_cancellable(self, messages, cancel):
+        """Wait for Ollama in a worker thread, watching for cancellation.
+
+        A local model cannot be told "never mind": there is no way to abort a
+        generation that is already running. So on cancellation this abandons
+        the request instead of waiting for it. The thread is a daemon, so it
+        cannot hold the process open, and -- the part that matters -- its
+        result is dropped on the floor. A reply that arrives after the run was
+        cancelled can therefore never turn into another action.
+        """
+        outcome = {}
+
+        def worker():
+            try:
+                outcome["text"] = self._chat(messages)
+            except BaseException as error:        # noqa: BLE001 - re-raised below
+                outcome["error"] = error
+
+        thread = threading.Thread(target=worker, daemon=True,
+                                  name="ollama-request")
+        thread.start()
+        try:
+            wait_for(lambda: not thread.is_alive(), cancel=cancel,
+                     timeout=self.settings.timeout_seconds)
+        except CancelledError:
+            # The thread is left to finish into the void; nothing reads `outcome`.
+            raise
+        if "error" in outcome:
+            raise outcome["error"]
+        if "text" not in outcome:
+            raise ModelError(
+                f"Ollama did not answer within {self.settings.timeout_seconds} seconds")
+        return outcome["text"]
+
+    def _chat(self, messages):
         """Send `messages` to Ollama's /api/chat and return the reply text."""
         url = self.settings.base_url.rstrip("/") + "/api/chat"
         payload = {
@@ -322,6 +371,25 @@ def _error_detail(response):
         return response.text[:200] or "(no details)"
 
 
+class Blocked:
+    """A scripted reply that hangs until the run is cancelled (or released).
+
+    This is how cancellation during a model request is tested without a live
+    model: the controller asks for an action, the scripted client waits here,
+    the test cancels, and the wait raises CancelledError exactly as a real
+    interrupted request would.
+    """
+
+    def __init__(self, action=None, timeout=10):
+        self.action = action
+        self.timeout = timeout
+        self.waiting = threading.Event()   # set once the client is inside the wait
+        self.released = threading.Event()  # set to let it answer after all
+
+    def release(self):
+        self.released.set()
+
+
 class ScriptedModelClient:
     """Fake model for tests and --offline: returns predefined replies in order.
 
@@ -344,13 +412,24 @@ class ScriptedModelClient:
         """How many times request_action was called."""
         return len(self.received)
 
-    def request_action(self, messages):
-        """Record the conversation, then return the next predefined reply."""
+    def request_action(self, messages, cancel=None):
+        """Record the conversation, then return the next predefined reply.
+
+        `cancel` is honoured so cancellation tests need no live model: a reply
+        may be a Blocked marker, which waits until the run is cancelled.
+        """
         self.received.append(copy.deepcopy(messages))
         if not self.replies:
             raise ModelError("The scripted model has no replies left")
 
         reply = self.replies.pop(0)
+        if isinstance(reply, Blocked):
+            # Behave like a model that is thinking: wait, watching for cancel.
+            reply.waiting.set()
+            wait_for(reply.released.is_set, cancel=cancel, timeout=reply.timeout)
+            if reply.action is None:
+                raise ModelError("The blocked reply was released with nothing to say")
+            reply = reply.action
         if isinstance(reply, Action):
             return reply
         if isinstance(reply, dict):
