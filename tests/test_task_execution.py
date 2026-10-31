@@ -2,7 +2,7 @@
 loop and the stopping rules.
 
 Everything is deterministic: the model is scripted, repositories are written
-into temporary folders, and checks run with the harness's own Python. No
+into temporary folders, and target checks run inside the Docker sandbox. No
 Ollama, no account, no API key.
 
 The centre of this file is test_failing_check_is_fed_back_and_the_fix_passes:

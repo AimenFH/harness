@@ -14,7 +14,7 @@ MODES = ("readonly", "edit")
 
 # Where repository code (checks and tests) runs.
 #   docker: inside a throwaway container with no network and no host files.
-#   none:   directly on this machine. NOT contained; only for when Docker is unavailable.
+#   none:   repository checks are unavailable; inspection/editing still works.
 SANDBOXES = ("docker", "none")
 DEFAULT_SANDBOX_IMAGE = "harness-sandbox"
 

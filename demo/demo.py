@@ -9,7 +9,7 @@
 
 All commands run without a shell, with a timeout, inside the copy. The
 acceptance and regression tests run in the same Docker sandbox as the
-harness's checks; add --sandbox none to run them directly on this machine.
+harness's checks. Target checks require Docker.
 """
 
 import argparse
@@ -99,10 +99,10 @@ def prepare():
 
 
 def run_tests(pytest_args, mounts=()):
-    """Run pytest in the copy, in the sandbox unless SANDBOX is "none".
+    """Run pytest in the copy, inside the approved Docker sandbox.
 
     Uses the harness's ExecutionEnvironment, so the same timeout, process
-    cleanup and (with Docker) the same container limits apply.
+    cleanup and the same container limits apply.
     """
     sandbox = None
     if SANDBOX != "docker":

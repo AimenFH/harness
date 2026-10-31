@@ -57,8 +57,8 @@ Docker: read-only repository mount, no network, no unrelated host files
 | `model_client.py` | **LLM Bridge** | Integration with Ollama; handles system prompting and JSON parsing. |
 | `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`. |
 | `navigation.py` | **Navigation** | Read-only, language-aware tools: `find_files`, `list_symbols`, `find_symbol` (AST-based, never runs code), `module_dependencies` (imports and importers), `git_state` (branch, commit, changed/untracked files). |
-| `execution.py` | **Environment** | Whitelisted test commands (pytest/unittest), run in a Docker sandbox (`DockerSandbox`) with timeouts and process cleanup. |
-| `verification.py` | **Validation** | Final check of resulting code via `git diff` and test suites. |
+| `execution.py` | **Environment** | Fixed pytest/unittest, Ruff and compileall commands; Docker containment, timeouts, cleanup, test counts and skip detection. |
+| `verification.py` | **Validation** | Independent final checks, staged/unstaged/untracked diff, unfinished work and final task assessment. |
 | `config.py` | **Settings** | Centralized management of limits, timeouts, and defaults; loads `--settings` files. |
 | `sandbox/Dockerfile` | **Sandbox image** | Python + pytest + the target's packages. The repository is mounted, never copied in. |
 
@@ -70,12 +70,12 @@ To prevent the LLM from performing destructive actions or accessing sensitive da
 
 1.  **Disposable Copies**: The harness does not operate on the original source code. It utilizes a disposable copy of the target repository (via `demo/demo.py prepare`), ensuring the original codebase remains untouched.
 2.  **Path Sandboxing**: Every tool in `repository_tools.py` enforces a strict root-directory boundary. Any attempt by the model to access files outside the `--root` folder (e.g., using `../` to reach SSH keys or system files) is intercepted and rejected with an `Access Denied` error.
-3.  **Contained Execution**: The `ExecutionEnvironment` does not provide a general shell. It only runs pre-configured test runners (`pytest`, `unittest`), and by default runs them inside a throwaway **Docker container** (`--sandbox docker`):
+3.  **Contained Execution**: The `ExecutionEnvironment` does not provide a general shell. It runs fixed test, lint and build commands inside a throwaway **Docker container** (`--sandbox docker`):
     *   only the repository copy is visible, mounted **read-only** at `/work` — no home folder, no SSH keys, no other host files;
     *   **no network** (`--network none`), no host environment variables (API keys, tokens), no Linux capabilities, a read-only system, a non-root user, and memory/CPU/process limits;
     *   on timeout or Ctrl+C the container is force-removed, so nothing keeps running or writing.
 
-    The acceptance check and regression tests in `demo/demo.py` run in the same sandbox. `--sandbox none` runs checks directly on this machine; the output then says *NOT contained*.
+    The acceptance check and regression tests in `demo/demo.py` run in the same sandbox. `--sandbox none` disables repository checks: configured checks are reported as unavailable and the task cannot succeed. There is no host fallback. Fixed read-only Git inspection still runs on the host.
 4.  **Resource Limits**: To prevent infinite loops or resource exhaustion, the `AgentController` enforces:
     *   **Action Limit**: Maximum number of model replies per session.
     *   **Output Limit**: Truncation of oversized tool outputs to prevent context window overflow.
@@ -205,8 +205,62 @@ worker has stopped. Cancellation also applies to final verification.
 
 Known limits: runner locks currently require POSIX (`fcntl`, macOS/Linux). The
 existing checkpoint tracks content hashes for harness-written files and Git status
-for other changes; it does not hash every untouched file. Context compaction and
-additional lint/build checks remain separate planned Stage 2 work.
+for other changes; it does not hash every untouched file. Context compaction
+remains separate planned Stage 2 work.
+
+### Independent verification and reporting
+
+Final verification reruns the configured checks regardless of the model's claims
+or earlier passing checks. Enable optional Python lint/build checks explicitly:
+
+```bash
+python main.py start --project cosmic --task "Fix allocation behavior" \
+  --mode edit --model qwen2.5-coder:7b --check pytest \
+  --lint ruff --build compileall
+```
+
+Or add these trusted settings outside the target repository:
+
+```toml
+lint_checks = ["ruff"]
+build_checks = ["compileall"]
+```
+
+Ruff uses its fixed default rules with `--isolated --no-cache`, so repository
+configuration cannot disable the configured check. `compileall` checks Python
+syntax without importing target modules; bytecode goes to the container's
+temporary filesystem. Rebuild the sandbox image after updating this checkout:
+`docker build -t harness-sandbox -f sandbox/Dockerfile .`. Other build systems
+need a separately reviewed fixed command and suitable sandbox image; arbitrary
+shell commands are not accepted.
+
+Reports show each check's command, containment, exit code, stdout and stderr,
+including successful runner summaries and test counts. Nonzero exits, missing
+tools, timeouts, cancellations, zero/unknown test counts, skips and expected
+failures never count as passed. This strict policy also rejects a suite with a
+mix of passing and skipped tests. Optional lint/build groups that were not
+selected say **NOT CONFIGURED**, rather than PASS. At least one test check is
+required for verification to pass.
+
+Git inspection happens after checks. The report lists changed and non-ignored
+untracked files, combines staged and unstaged changes against `HEAD`, and appends
+unified diffs for untracked text files. Renames and paths containing spaces or
+Unicode are handled without parsing quoted filenames. External diff/textconv
+and filesystem-monitor helpers are disabled. Missing Git data or unreadable,
+binary or oversized untracked content is explicit and prevents a verification
+pass; available file names and partial diff evidence remain visible.
+
+The final task status is separate from the controller's stopping status:
+`completed`, `unfinished`, `cancelled`, or `needs attention`. Remaining problems
+include failed/unavailable checks, unavailable diff evidence, exhausted/interrupted
+runs, uncertain actions and out-of-scope changes. External acceptance checks saved
+with `--acceptance` are not automatically executed by this verifier; they are
+listed as unfinished work and block task success until handled in the protected
+acceptance workflow. Passing ordinary tests alone does not establish that a
+feature request has been fulfilled.
+
+All final check results and remaining problems are persisted with the task and
+shown by `show` after restart. `status` also displays the final assessment.
 
 ### Stage 1 compatibility
 
@@ -237,7 +291,8 @@ python main.py \
 | `--model` | Ollama model name (required). |
 | `--check` | Test command for `run_check` and verification: `unittest` (default) or `pytest`. |
 | `--file` | A file sent to the model with the task. Repeat for several files. |
-| `--sandbox` | `docker` (default) or `none` (checks run directly on this machine, NOT contained). |
+| `--sandbox` | `docker` (contained) or `none` (repository checks unavailable; no host execution). |
+| `--lint` / `--build` | Optional fixed final checks: `ruff` / `compileall`; also configurable through settings. |
 | `--settings` | A TOML settings file, see [`settings.example.toml`](settings.example.toml). |
 | `--offline` | Do not contact Ollama; uses a tiny scripted reply (for trying the CLI). |
 
@@ -253,7 +308,9 @@ The project includes a comprehensive test suite in `tests/` that uses a `Scripte
 python -m pytest -q
 ```
 A full detailed log of the passing unit tests is provided in [tests/test_results.txt](tests/test_results.txt).
-The tests that start real Docker containers (`tests/test_sandbox.py`) are skipped when Docker or the `harness-sandbox` image is not available; everything else needs neither Docker nor Ollama.
+Build `harness-sandbox` and run Docker for integration tests that execute target code.
+No tests need Ollama, an account or API key. Parser, safety and scripted-model unit
+tests remain independent of a live model; repository checks run inside Docker.
 
 **Coverage includes**:
 - ✅ **Tool Safety**: Verification that paths outside `--root` are rejected.
@@ -263,6 +320,8 @@ The tests that start real Docker containers (`tests/test_sandbox.py`) are skippe
 - ✅ **Sandbox**: The container sees no secrets, host files or network and cannot write the repository; a timeout removes the container.
 - ✅ **Settings**: The example file matches the defaults; unknown or invalid settings are rejected.
 - ✅ **Stage 2 CLI**: All commands, strict project configuration, denied projects, saved review after restart, failure exit codes, resume safety and concurrent-run rejection. A separate-process test cancels an active task during its first model wait, then resumes it safely. Existing cancellation tests cover process/child/container cleanup.
+
+- ✅ **Verification/reporting**: Real passing/failing lint/build checks, missing tools, zero/skipped tests, timeouts, staged/untracked diffs, incomplete evidence, unfinished tasks, and saved final assessments. Target checks run through contained execution.
 
 ### Real-World Demo
 The `demo/` folder contains a proof-of-concept fix for the **Cosmic Python** repository:

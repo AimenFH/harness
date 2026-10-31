@@ -204,6 +204,10 @@ class Session:
                          "confirmed finished. It will NOT be replayed automatically.")
         if self.result:
             lines.append(f"Final verification: {self.result.get('verdict', 'UNAVAILABLE')}")
+            if self.result.get('task_status'):
+                lines.append(f"Final task status: {self.result['task_status']}")
+            if self.result.get('remaining_problems'):
+                lines.append(f"Remaining problems: {len(self.result['remaining_problems'])}; see show")
         return "\n".join(lines)
 
     def to_dict(self):

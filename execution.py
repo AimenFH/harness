@@ -129,7 +129,7 @@ class DockerSandbox:
         except OSError:
             raise ExecutionError(
                 f"Docker is not installed ({self.docker!r} not found). Install Docker, "
-                "or run with --sandbox none (checks are then NOT contained).") from None
+                "and build the sandbox image. --sandbox none disables repository checks.") from None
         except subprocess.TimeoutExpired:
             raise ExecutionError("Docker did not answer within 60s. Is it running?") from None
         if done.returncode != 0:
@@ -226,10 +226,10 @@ class CommandResult:
             return "UNAVAILABLE (command could not be run)"
         if self.exit_code is None:
             return "FAILED (command could not be started)"
-        if self.no_tests_ran:
-            return f"FAILED (no tests were run, exit code {self.exit_code})"
         if self.skipped_tests:
             return f"NOT PASSED ({self.skipped_tests} skipped/expected-failure tests)"
+        if self.no_tests_ran:
+            return f"FAILED (no tests were run, exit code {self.exit_code})"
         if self.exit_code == 0:
             return "SUCCEEDED (exit code 0)"
         return f"FAILED (exit code {self.exit_code})"
@@ -252,7 +252,7 @@ class ExecutionEnvironment:
 
     def __init__(self, root, timeout_seconds=30, allowed_commands=None, sandbox=DEFAULT_CONTAINMENT):
         """Store the repository root, timeout, the command whitelist and the
-        sandbox (None runs commands directly on this machine)."""
+        sandbox (omitted: Docker for repository checks; explicit None refuses them)."""
         self.root = Path(root).resolve()
         if not self.root.is_dir():
             raise ExecutionError(f"Repository root is not a directory: {self.root}")

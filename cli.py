@@ -109,7 +109,7 @@ def build_legacy_parser():
         choices=SANDBOXES,
         default=None,  # None: use the settings file, else "docker"
         help="Where checks run. docker (default): a container with no network that only "
-             "sees the repository. none: directly on this machine (NOT contained).",
+             "sees the repository. none: repository checks are unavailable.",
     )
     parser.add_argument(
         "--settings",
@@ -282,7 +282,7 @@ def build_parser():
     start.add_argument('--check', choices=TEST_COMMANDS, default='unittest',
                        help='Whitelisted check for the loop and final verification (default: unittest).')
     start.add_argument('--sandbox', choices=SANDBOXES,
-                       help='docker (default): contained; none: run checks on this machine.')
+                       help='docker (default): contained; none: repository checks are unavailable.')
     start.add_argument('--settings', metavar='FILE', help='TOML limits, timeouts and sandbox settings.')
     start.add_argument('--lint', action='append', choices=LINT_COMMANDS,
                        help='Independent final lint check (also configurable in settings).')

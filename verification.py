@@ -126,10 +126,10 @@ def _check_text(check):
         verdict = f'FAIL (timed out after {check.duration_seconds:.1f}s)'
     elif check.unavailable or check.exit_code is None:
         verdict = 'FAIL (unavailable: the check could not be run)'
-    elif check.no_tests_ran:
-        verdict = 'FAIL (no tests were run)'
     elif check.skipped_tests:
         verdict = f'NOT PASSED ({check.skipped_tests} skipped/expected-failure tests)'
+    elif check.no_tests_ran:
+        verdict = 'FAIL (no tests were run)'
     else:
         verdict = 'FAIL'
     lines = [f'{check_category(check.name).upper()}: {check.name}', command,

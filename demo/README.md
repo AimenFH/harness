@@ -72,9 +72,9 @@ python demo/demo.py prepare   # reset after the rehearsal
 `prepare` always makes a fresh copy at the pinned commit and removes the git remote,
 so nothing can be pushed from it. The harness's checks, the acceptance check and the
 regression tests all run in the Docker sandbox (read-only copy, no network), which is
-why the target's packages go into the sandbox image. Without Docker, add `--sandbox none`
-to the harness and to `demo.py`, and install `demo/requirements-target.txt` into the
-virtual environment instead; the checks are then NOT contained.
+why the target's packages go into the sandbox image. Docker is required for target
+checks. The harness reports checks unavailable with `--sandbox none`; the demo
+refuses uncontained acceptance/regression execution.
 
 ## 4-minute demo script
 

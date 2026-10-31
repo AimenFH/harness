@@ -11,7 +11,7 @@ This file records each phase: what was checked or built, test results, and open 
 | 4 | Task record, scope enforcement, action log, stopping rules | **done** |
 | 5 | Cancellation (from another process, mid-request, mid-command) | **done** |
 | 6 | Session storage and safe resume | **done** |
-| 7 | Verification extras (lint/build checks, unfinished work) + check loop | planned |
+| 7 | Verification extras (lint/build checks, unfinished work) + check loop | **done** |
 | 8 | CLI subcommands, allowed projects, interface/core split | **done** |
 | 9 | Stage 2 feature demo (task, acceptance + regression checks, rehearsal) | planned |
 | 10 | README, diagrams, real-model run, results | planned |
@@ -117,11 +117,11 @@ Status today: ✅ done in Stage 1 · 🟡 partly · ❌ missing.
 | S4 | **Resume** from a safe checkpoint | ❌ |
 | S5 | Mark **uncertain interrupted actions** explicitly; never replay them automatically | ❌ |
 | S6 | On resume: preserve consumed limits, revalidate permissions and the saved working-copy state incl. the harness's own edits; pause on mismatch | ❌ |
-| V1 | Show changed files and final diff | ✅ |
-| V2 | Test **and lint** results | 🟡 tests only |
-| V3 | Show **unfinished work** | ❌ |
+| V1 | Show changed files and final diff | ✅ staged + unstaged + untracked (Phase 7) |
+| V2 | Test **and lint** results | ✅ configured Ruff, full runner output (Phase 7) |
+| V3 | Show **unfinished work** | ✅ final assessment and remaining problems (Phase 7) |
 | V4 | Failed / unavailable checks stay visible, never shown as passed | ✅ |
-| V5 | Build checks if needed | ❌ (e.g. compile check) |
+| V5 | Build checks if needed | ✅ configured Python compileall in Docker (Phase 7) |
 | U1 | **Select an allowed project** | ✅ named, explicit TOML approvals (Phase 8) |
 | U2 | Start and **inspect** a task | ✅ `start`, `status`, `show`, `list` (Phase 8) |
 | U3 | Cancel, resume, review the result from the CLI | ✅ `cancel`, safe `resume`, saved checks/diff (Phase 8) |
@@ -1034,3 +1034,72 @@ check hashes harness-written files and compares Git status for other changes,
 not the bytes of every untouched file. No context compression or lint/build work
 was added in this phase. `--offline` replaces the model only; checks still use the
 configured sandbox.
+
+---
+
+## Phase 7 — Verification and reporting (2026-10-31)
+
+User requirement 7 / **V1–V5** implemented, preserving the existing edit–test–fix
+loop and Stage 1/Stage 2 behavior under the required contained execution policy.
+
+### Changes
+
+- Verification reruns configured checks independently of model claims and prior
+  controller results. Reports retain each command, sandbox, exit code, stdout and
+  stderr, including successful runner summaries and actual test counts.
+- Added fixed `ruff` lint and Python `compileall` build checks, selected with
+  `--lint ruff` / `--build compileall` or trusted `lint_checks` / `build_checks`
+  settings. These settings and check names survive session save/resume.
+- Rebuilt `harness-sandbox` with pinned Ruff 0.14.6. Ruff ignores repository
+  configuration and uses no cache; compileall runs in isolated Python mode and
+  writes bytecode only into the container's temporary filesystem.
+- Repository check commands default to Docker. Explicitly selecting no sandbox
+  makes checks unavailable and blocks success; it never falls back to host
+  execution. Demo acceptance/regression checks also refuse uncontained runs.
+  Existing integration fixtures now use the contained backend, including the
+  Stage 1 protected acceptance/regression test and cancellation subprocess.
+- Missing tools, unavailable Docker execution, nonzero exits, timeout,
+  cancellation, zero/unknown test counts, skips and expected failures cannot pass.
+  A mixture of passing and skipped tests is also not a passing suite. Optional
+  unselected lint/build groups say NOT CONFIGURED; lint-only cannot establish a
+  verification pass because a test check is required.
+- Git inspection runs after checks and shows staged plus unstaged changes against
+  HEAD, all changed/non-ignored untracked paths, renames and unified untracked
+  text diffs. NUL-delimited status handles spaces and Unicode. External diff,
+  textconv and filesystem-monitor helpers are disabled. Missing Git evidence and
+  unreadable/binary/oversized untracked content remain explicit and prevent a
+  pass; available names and partial evidence remain visible.
+- Final assessment separates controller stopping status from `completed`,
+  `unfinished`, `cancelled` or `needs attention`. Remaining problems identify
+  failed/unavailable checks, incomplete diffs, unfinished runs, uncertainty and
+  out-of-scope changes. Recorded external acceptance checks not run by this
+  verifier are unfinished work, not implicit passing checks.
+- The CLI and saved sessions include Tests, Lint, Build, Unfinished work /
+  remaining problems, final status and full check evidence. `show` works after
+  restart or target removal; `status` includes the final assessment.
+
+### Validation
+
+```
+docker build -t harness-sandbox -f sandbox/Dockerfile .  -> success
+.venv/bin/python -m pytest -q tests/test_reporting.py tests/test_cancellation.py
+                                                       -> 58 passed
+.venv/bin/python -m pytest -q                           -> 432 passed in 48.18s
+                                                         0 failed, 0 skipped
+git diff --check                                       -> clean
+python main.py start --help                            -> lint/build options documented
+```
+
+Added **33 reporting tests** covering actual passing/failing lint and build,
+missing tools, zero/skipped/expected-failure tests, timeout, no-containment refusal,
+unfinished/cancelled/error/limit-stopped tasks, uncertain and out-of-scope work,
+staged/untracked/renamed/unusual paths, post-check diff capture, unavailable Git
+and file content, disabled textconv, configuration validation and persisted
+reports after restart. The complete Stage 1 and Stage 2 regression suites passed
+with real target checks contained in Docker and no live model/account/API key.
+
+Known limits: build support currently covers Python compilation, not arbitrary
+project build systems. The verifier does not automatically execute saved external
+acceptance paths; the protected demo acceptance workflow remains separate and
+unrun acceptance is explicitly reported as unfinished work. Context compaction
+and the Stage 2 feature demo remain separate phases.
