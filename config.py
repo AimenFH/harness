@@ -73,6 +73,13 @@ class Config:
     # Where to write the task record (specification + every action). None = nowhere.
     record_path: str = ""
 
+    # Where sessions are saved, so a run can be reopened and resumed. "" = not saved.
+    session_dir: str = ""
+
+    # Projects the harness may work on at all. () = no allowlist (any --root that
+    # passes the safety checks). Revalidated before a session is resumed.
+    allowed_projects: tuple = ()
+
     ollama_url: str = DEFAULT_OLLAMA_URL
     model_timeout_seconds: int = 300  # local models can be slow, esp. the first call
     num_ctx: int = DEFAULT_NUM_CTX
@@ -106,6 +113,7 @@ class Config:
             f"Offline: {'yes' if self.offline else 'no'}",
             f"Files:   {', '.join(self.context_files) or '(none selected)'}",
             f"Allowed: {', '.join(self.allowed_changes) or 'any file in the repository'}",
+            f"Session: {self.session_dir or '(not saved)'}",
             f"Sandbox: {self.sandbox_text()}",
         ]
         return "\n".join(lines)

@@ -24,6 +24,7 @@ from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_me
                           validate_tool_call)
 from navigation import RepositoryNavigator
 from repository_tools import AccessDeniedError, RepositoryError
+from session import Checkpoint, file_digest
 from task_record import MALFORMED, ScopePolicy, TaskRecord, TaskSpec
 
 # Possible values of RunResult.status
@@ -46,6 +47,9 @@ STOPPING_RULES = {
 OK = "ok"
 DENIED = "denied"
 FAILED = "failed"
+# An action that was started but whose result was never recorded, because the
+# process stopped in between. Its effect is unknown, so it is never replayed.
+UNCERTAIN = "uncertain"
 
 TRUNCATION_MARKER = "[OUTPUT TRUNCATED]"
 
@@ -73,6 +77,7 @@ class RunResult:
     changed_files: list = field(default_factory=list)
     last_check: Optional[CommandResult] = None
     record: Optional[TaskRecord] = None  # the task specification and every action
+    session: object = None               # the saved Session, when one is in use
 
     def stopping_rule(self):
         """Why the run stopped, in words."""
@@ -111,7 +116,7 @@ class Controller:
     """Runs the loop between the model and the tools."""
 
     def __init__(self, config, model, tools, executor, log=print, navigator=None,
-                 spec=None, cancel=None):
+                 spec=None, cancel=None, session=None, store=None):
         """
         config:    Config (mode, limits, check_command)
         model:     anything with request_action(messages) -> Action
@@ -123,6 +128,8 @@ class Controller:
         spec:      TaskSpec saved with the run. By default one is built from
                    `config`, so the scope comes from config.allowed_changes.
         cancel:    CancelToken checked between steps; None = never cancelled
+        session:   Session to record this run in; None = nothing is saved
+        store:     SessionStore the session is written to after every step
         """
         self.config = config
         self.model = model
@@ -139,6 +146,8 @@ class Controller:
         )
         self.scope = ScopePolicy(self.spec.allowed_changes)
         self.cancel = cancel
+        self.session = session
+        self.store = store
         self.failed_actions = set()  # actions that already failed; see _repeat_problem
         self.repeats = 0             # denied requests to repeat a failed action
         self.partly_read = set()     # files the model has only seen truncated
@@ -179,10 +188,53 @@ class Controller:
         self.failed_actions = set()
         self.repeats = 0
         self.record = TaskRecord(spec=self.spec)
-        rejected_in_a_row = 0
         messages = initial_messages(task, self.config.mode, self._check_names(),
                                     self.selected_files_text(context_files))
+        return self._loop(messages, rejected_in_a_row=0)
 
+    def resume(self, session):
+        """Carry on a saved session from its checkpoint.
+
+        The caller must have checked with session.check_resume() that this is
+        safe; this method restores the state and continues the loop. The
+        consumed limits come back with it, so a resumed run cannot get more
+        actions than the task was given. An uncertain action is NOT replayed:
+        it is recorded as such and the model is told about it instead.
+        """
+        saved = session.checkpoint
+        self.counters = Counters(**{name: saved.counters.get(name, 0)
+                                    for name in _COUNTER_NAMES})
+        self.changed_files = list(saved.changed_files)
+        self.partly_read = {self._key(path) for path in saved.partly_read}
+        self.partly_read.discard(None)
+        self.read_files = {self._key(path) for path in saved.read_files}
+        self.read_files.discard(None)
+        self.checked_since_edit = saved.checked_since_edit
+        self.failed_actions = {tuple(entry) for entry in saved.failed_actions}
+        self.repeats = saved.repeats
+        self.last_check = None  # the CommandResult itself is not saved; see below
+        self.record = TaskRecord(spec=self.spec, actions=list(session.actions))
+        self.session = session
+
+        messages = list(saved.messages)
+        # A check result is saved as text, not as a CommandResult. Reload it as
+        # a stand-in so done_problem() still refuses `done` after a failed one.
+        if saved.last_check:
+            self.last_check = _check_placeholder(saved.last_check)
+        if session.uncertain:
+            self.record.add(saved.step, session.uncertain.get("tool", "?"),
+                            session.uncertain.get("arguments", {}),
+                            outcome=UNCERTAIN,
+                            detail="started but never confirmed finished; not replayed")
+            messages.append({"role": "user", "content": _uncertain_notice(session.uncertain)})
+            self.log(f"[resume] uncertain action not replayed: "
+                     f"{session.uncertain.get('tool', '?')}")
+        self.log(f"[resume] step {saved.step}, "
+                 f"{self.counters.actions}/{self.config.max_actions} actions used")
+        return self._loop(messages, rejected_in_a_row=saved.rejected_in_a_row)
+
+    def _loop(self, messages, rejected_in_a_row=0):
+        """The agent loop. Used both for a fresh run and for a resumed one."""
         while True:
             # Cancellation: checked BEFORE asking, so no further model call and
             # no further tool runs once a stop has been requested.
@@ -205,6 +257,9 @@ class Controller:
             try:
                 action = self.model.request_action(messages)
             except ModelError as error:
+                # Record it too: the brief expects a reopened session to show
+                # its errors, and this one is why the run ended.
+                self.record.add(step, "(model error)", outcome=FAILED, detail=str(error))
                 return self._stop(ERROR, f"Stopped: model error: {error}")
             except InvalidActionError as error:
                 # The model answered, but badly. Tell it and let it try again.
@@ -232,10 +287,18 @@ class Controller:
                     outcome, text = self._deny(problem)
                     self.record.add(step, "done", outcome=DENIED, detail=problem)
                 else:
+                    # Save a checkpoint naming the action we are ABOUT to run.
+                    # If the process dies now, the reopened session still has
+                    # it pending, so it is reported as uncertain, not replayed.
+                    self._checkpoint(messages, rejected_in_a_row, pending=action)
                     # 3. Validate and run the tool, 4. send the result back.
                     outcome, text = self.execute(action)
                 messages.append({"role": "user", "content": text})
                 rejected_in_a_row = rejected_in_a_row + 1 if outcome == DENIED else 0
+
+            # The step is finished and its result is recorded: no action is in
+            # flight any more, so the next checkpoint carries no `pending`.
+            self._checkpoint(messages, rejected_in_a_row)
 
             # Retry limit: too many malformed/denied requests in a row.
             if rejected_in_a_row >= self.config.max_retries:
@@ -499,14 +562,62 @@ class Controller:
         record.add(getattr(self, "step", len(record.actions) + 1), action.tool,
                    action.arguments, outcome=outcome, detail=detail, check=check)
 
+    # ----- sessions ----------------------------------------------------------
+
+    def _checkpoint(self, messages, rejected_in_a_row, pending=None, status=None):
+        """Save the run's state, durably and atomically. Does nothing without a store.
+
+        Called twice per step: once naming the action about to run (`pending`),
+        and once after its result has been recorded (`pending` cleared). That
+        pair is what makes an interrupted action detectable afterwards.
+        """
+        if self.session is None or self.store is None:
+            return None
+        branch, commit, dirty = self.navigator.state_summary()
+        self.session.checkpoint = Checkpoint(
+            step=self.counters.actions,
+            counters=vars(self.counters).copy(),
+            messages=list(messages),
+            changed_files=list(self.changed_files),
+            file_digests={path: file_digest(self.tools.root / path)
+                          for path in self.changed_files},
+            read_files=sorted(self._relative_of(key) for key in self.read_files),
+            partly_read=sorted(self._relative_of(key) for key in self.partly_read),
+            failed_actions=[list(entry) for entry in sorted(self.failed_actions)],
+            repeats=self.repeats,
+            rejected_in_a_row=rejected_in_a_row,
+            checked_since_edit=self.checked_since_edit,
+            last_check=({"name": self.last_check.name,
+                         "status": self.last_check.status()}
+                        if self.last_check is not None else None),
+            branch=branch, commit=commit, dirty=dirty,
+            pending=({"step": self.counters.actions, "tool": pending.tool,
+                      "arguments": dict(pending.arguments)} if pending else None),
+        )
+        self.session.actions = list(self.record.actions)
+        if status:
+            self.session.status = status
+        return self.store.save(self.session)
+
+    def _relative_of(self, key):
+        """Turn a resolved path back into a root-relative one for saving."""
+        try:
+            return Path(key).relative_to(self.tools.root).as_posix()
+        except (TypeError, ValueError):
+            return str(key)
+
     def _stop(self, status, summary, quiet=False):
         if not quiet:
             self.log(summary)
         record = getattr(self, "record", None)
         if record is not None:
             record.finish(status, summary)
+        if self.session is not None and self.store is not None:
+            self.session.summary = summary
+            self._checkpoint(list(self.session.checkpoint.messages), 0, status=status)
         return RunResult(status, summary, self.counters, self.config.max_actions,
-                         list(self.changed_files), self.last_check, record)
+                         list(self.changed_files), self.last_check, record,
+                         self.session)
 
 
 def truncate(text, limit):
@@ -533,3 +644,36 @@ def _as_json(action):
 def _action_key(action):
     """A hashable identity for one action, so an identical repeat is recognised."""
     return action.tool, json.dumps(action.arguments, sort_keys=True)
+
+
+# Counters() field names, used to restore consumed limits on resume.
+_COUNTER_NAMES = tuple(vars(Counters()))
+
+
+def _check_placeholder(saved):
+    """Stand in for a saved check result.
+
+    Only the check's name and status line are saved, not its whole output, so
+    a resumed run cannot show the old stdout. What matters for safety is
+    whether it PASSED: done_problem() must still refuse `done` after a failure.
+    """
+    status = saved.get("status", "")
+    passed = status.startswith("SUCCEEDED")
+    return CommandResult(
+        name=saved.get("name", "check"), command=[saved.get("name", "check")],
+        exit_code=0 if passed else 1, stdout="", stderr="",
+        timed_out=False, duration_seconds=0.0,
+        no_tests_ran=False, sandbox="(from the saved session)",
+    )
+
+
+def _uncertain_notice(pending):
+    """What the model is told about an action that was interrupted."""
+    arguments = pending.get("arguments") or {}
+    detail = ", ".join(f"{name}={value!r}" for name, value in arguments.items())
+    return (
+        "NOTE: this task was interrupted. The action "
+        f"{pending.get('tool', '?')}({detail}) was started but its result was never "
+        "recorded, so nobody knows whether it took effect. It has NOT been repeated. "
+        "Check the current state of the files yourself before you change anything."
+    )

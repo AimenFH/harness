@@ -81,7 +81,8 @@ class SpyExecutor(ExecutionEnvironment):
         return super().run(name)
 
 
-def make_harness(root, replies, mode="edit", spec=None, cancel=None, **settings):
+def make_harness(root, replies, mode="edit", spec=None, cancel=None,
+                 session=None, store=None, **settings):
     """Build a Controller wired to a scripted model and spy tools.
 
     `settings` may override any Config field, e.g. max_actions, max_retries,
@@ -96,7 +97,7 @@ def make_harness(root, replies, mode="edit", spec=None, cancel=None, **settings)
     executor = SpyExecutor(root, timeout_seconds=30)
     log = []
     controller = Controller(config, model, tools, executor, log=log.append,
-                            spec=spec, cancel=cancel)
+                            spec=spec, cancel=cancel, session=session, store=store)
     return SimpleNamespace(controller=controller, model=model, tools=tools,
                            executor=executor, log=log)
 

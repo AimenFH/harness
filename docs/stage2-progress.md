@@ -9,8 +9,8 @@ This file records each phase: what was checked or built, test results, and open 
 | 2 | Navigation (symbols, dependencies, Git state) | **done** |
 | 3 | Context management (repo map, file selection, bounded history) | **not started** (skipped for now) |
 | 4 | Task record, scope enforcement, action log, stopping rules | **done** |
-| 5 | Cancellation (model request + command) | planned |
-| 6 | Safe resume (revalidation, pause on mismatch / uncertain action) | planned |
+| 5 | Cancellation | **partly** — stops between steps; not yet mid-request/mid-command |
+| 6 | Session storage and safe resume | **done** |
 | 7 | Verification extras (lint/build checks, unfinished work) + check loop | planned |
 | 8 | CLI subcommands, allowed projects, interface/core split | planned |
 | 9 | Stage 2 feature demo (task, acceptance + regression checks, rehearsal) | planned |
@@ -589,3 +589,219 @@ Each run configuration pins the interpreter with
 registered. All files are valid XML and the command they run is the same one
 verified above. **IntelliJ must reload the project once** to pick up the new
 module and configurations; this could not be triggered from outside the IDE.
+
+---
+
+## Phase 6 — Session storage and safe resume (2026-10-31)
+
+Covers the brief's fourth "What to build" row (Sessions): **S1, S2, S4, S5, S6**,
+and the session half of **S3**. Tests: **X3** (session storage) and **X5** (safe
+resume). Built and verified on the developer's Mac.
+
+### What was built
+
+New module `session.py`:
+
+| Part | Role |
+|---|---|
+| `new_session_id()` | A stable id: `20261031-192133-423acb45` — date, time, 8 random hex. Sortable, readable, unique, and it never changes once saved. |
+| `Checkpoint` | Everything needed to carry on: step, consumed counters, the conversation, changed files **with a sha256 each**, files read in full, files read truncated, actions that already failed, `repeats`, `rejected_in_a_row`, `checked_since_edit`, the last check's name and status, the repository's branch/commit/dirty list, and `pending`. |
+| `Session` | id, `TaskSpec`, status, summary, every `ActionRecord`, the latest `Checkpoint`, timestamps, and `uncertain`. `progress()` prints how far it got. |
+| `SessionStore` | `save` / `load` / `reopen` / `list_sessions`, one JSON file per session. |
+| `check_resume()` | Compares a saved session with the world as it is now and returns **every** mismatch. |
+| `ResumeReport` | `safe`, the mismatches, and the notes; `text()` is what the CLI prints. |
+
+### The checkpoint design
+
+**What a checkpoint is for.** A run used to live only in memory: if the process
+died, the work was lost and the repository was left half-changed with nothing to
+say what had happened. A checkpoint is the smallest set of facts that lets a new
+process pick the task up — or refuse to.
+
+**When one is written.** Twice per step, and that pairing is the whole trick:
+
+```
+          ┌─ checkpoint(pending=action)   <- "I am about to run this"
+step N ───┤  execute the tool
+          └─ checkpoint(pending=None)     <- "it finished, result recorded"
+```
+
+If the process is killed anywhere between those two writes, the file on disk
+still says `pending`. That is how an interrupted action becomes *detectable*
+rather than invisible. A final checkpoint is written when the run stops, carrying
+the terminal status.
+
+**How it is written — durable and atomic.** `SessionStore.save()`:
+
+1. writes the whole JSON to `<id>.json.tmp` in the same directory,
+2. `flush()` then `os.fsync()` — the bytes are on the disk, not in a buffer,
+3. `os.replace(tmp, <id>.json)` — atomic on POSIX **and** Windows.
+
+A reader therefore sees either the previous checkpoint or the new one, never a
+half-written file. A crash costs at most the newest step. `list_sessions()`
+ignores `.tmp` files, so a leftover temp file from a crash is never offered as a
+session. Covered by `test_a_half_written_temporary_file_never_becomes_the_session`.
+
+**What is deliberately *not* saved.** The check's full stdout. Only its name and
+status line are kept, because the output can be huge and is already in the
+conversation. On resume a stand-in `CommandResult` is rebuilt from the status, so
+`done_problem()` still refuses `done` after a check that failed — the safety
+property survives even though the text does not.
+
+### Safe resume: what is revalidated
+
+`check_resume()` collects **all** mismatches rather than raising on the first, so
+the user is told everything that is wrong at once:
+
+| Check | Pauses when |
+|---|---|
+| Session finished | the status is `done` |
+| Project allowlist | the root is not in `--allowed-project` |
+| Same project | the session was saved for a different `--root` |
+| Permissions: mode | `--mode` differs from the saved one |
+| Permissions: scope | `--allow` patterns differ from the saved ones |
+| Git branch | the branch moved |
+| Git commit | the commit moved |
+| **The agent's own edits** | a file the agent changed no longer has the sha256 it had at the checkpoint, or is missing |
+| Other working-copy changes | `git status` shows files the checkpoint did not |
+| Action limit | already used up |
+| Retry limit | `repeats` already at the limit |
+
+On any mismatch the harness prints `PAUSED:`, lists the reasons, says
+"Nothing was executed", and exits **3**. It does not resume.
+
+### Uncertain actions are never replayed
+
+A `pending` action in a reopened session means the process stopped between
+starting it and recording its result. Nobody knows whether the file was written.
+So `reopen()` moves it out of `pending` into `uncertain`, and:
+
+- it is recorded in the action log with the outcome **`uncertain`**,
+- it is reported in `progress()` and in the resume notes,
+- the model is told about it in plain words ("started but its result was never
+  recorded ... It has NOT been repeated. Check the current state of the files
+  yourself"),
+- and it is **never re-executed**.
+
+It is a *note*, not a mismatch: the run may continue, it just must not repeat the
+action. `test_an_uncertain_action_is_never_replayed` asserts the tool was never
+called again and the file is untouched.
+
+### A design error this phase corrected
+
+The first version treated `cancelled`, `error`, `action_limit_reached` and
+`retry_limit_reached` as finished, so none of them could be resumed. That is
+wrong twice over. The brief's Sessions row asks for "**cancel** an active run,
+and **resume** from a safe checkpoint" — that pair is the expected flow. And a
+run that died because Ollama was unreachable is the single most useful thing to
+resume once Ollama is back.
+
+`FINISHED` is now `("done",)` alone. Everything else stays resumable *in
+principle*, and whether it actually may continue is decided by the other checks —
+exhausted limits, moved commit, changed permissions — which give a far more
+useful message than "already finished". `test_only_done_is_treated_as_finished`
+and `test_a_cancelled_run_can_be_resumed` pin this down.
+
+A second gap found while testing: a fatal model error ended the run without
+appearing in the action log, although the brief expects a reopened session to
+show its **errors**. It is now recorded as `(model error)`.
+
+### New CLI
+
+```bash
+# save the run as a session
+python main.py --root ... --task ... --mode edit --model qwen2.5-coder:7b \
+    --session-dir ~/harness-sessions --allow service_layer/services.py
+
+# see what is saved
+python main.py --list-sessions --session-dir ~/harness-sessions
+
+# check whether resuming is safe, execute nothing
+python main.py --resume <id> --session-dir ~/harness-sessions --dry-run
+
+# resume
+python main.py --resume <id> --session-dir ~/harness-sessions
+```
+
+`--allowed-project PATH` (repeatable) restricts which projects the harness may
+work on at all; it is checked for a new run and revalidated on resume. Exit
+codes: `0` success, `1` the run did not finish cleanly, `2` the session could not
+be read, `3` **paused** on a mismatch.
+
+### Files
+
+| File | Change |
+|---|---|
+| `session.py` | **new** — ids, `Checkpoint`, `Session`, `SessionStore`, `check_resume`, `ResumeReport` |
+| `controller.py` | `run()` split into `run` / `resume` / `_loop`; `_checkpoint()` before and after every action; restores consumed limits, read files, failed actions and the check gate; `UNCERTAIN` outcome; records `(model error)` |
+| `navigation.py` | `state_summary()` → `(branch, commit, dirty)` from the same read-only git whitelist |
+| `config.py` | `session_dir`, `allowed_projects`; `Session:` line in the summary |
+| `main.py` | `--session-dir`, `--resume`, `--list-sessions`, `--allowed-project`, `--dry-run`; `report_run()` extracted so a fresh run and a resumed one report identically |
+| `tests/test_sessions.py` | **new** — 33 tests |
+| `tests/helpers.py` | `make_harness` takes `session` and `store` |
+| `.idea/runConfigurations/Session_tests.xml` | **new** — pytest over `tests/test_sessions.py` |
+
+### Tests (`tests/test_sessions.py`, 33 tests)
+
+A "restart" is modelled honestly: the `Session` object is discarded and reloaded
+from disk through a brand new `SessionStore`, so nothing can leak through memory.
+A "kill" is modelled by making a tool handler raise, so the pre-action checkpoint
+is on disk and the post-action one never happens — exactly what SIGKILL leaves.
+
+| Section | What is checked |
+|---|---|
+| Ids and storage | unique, sortable, path traversal in an id refused, no temp file left behind, a half-written temp file never becomes the session, unreadable sessions skipped not fatal, newest first |
+| Reopening after restart | request, steps, history, tool error, fatal error, check result, changed files and consumed limits all come back; progress text |
+| Successful safe resume | continues the same task to `done`; step numbers continue; the action budget is **not** renewed; a `done` session is refused |
+| Repository mismatch | the agent's own edit modified or deleted; commit moved; branch switched; an unrelated file appeared; a different root; one-byte digest change |
+| Permission changes | mode changed; allowed changes widened or narrowed; project no longer in the allowlist; all mismatches reported at once |
+| Exhausted limits | action limit used up; retry limit used up; remaining never negative |
+| Uncertain actions | saved as `pending`; reopened as `uncertain`; **never replayed**; the model is told; reported as a note not a mismatch; a completed step leaves no `pending` |
+| Cancel then resume | a cancelled run reopens and finishes; only `done` counts as finished |
+
+### Results
+
+```
+python -m pytest -q tests/test_sessions.py  ->  33 passed
+python -m pytest -q                         ->  290 passed (257 + 33), 0 skipped
+demo.py rehearse (Stage 1 demo)             ->  SUCCESS, Verification PASS
+```
+
+End-to-end across **three separate OS processes**, with a real git repository:
+
+```
+process 1  killed mid-edit        -> [1] read_file, [2] edit_file <<< killed >>>
+process 2  --list-sessions        -> 20261031-192133-423acb45  running  UNCERTAIN ACTION
+process 2  --resume --dry-run     -> Safe to resume; note: step 2 edit_file ... NOT replayed
+process 3  --resume               -> [resume] uncertain action not replayed: edit_file
+                                     [resume] step 2, 2/20 actions used
+                                     [3] read_file [4] replace_in_file [5] run_check
+                                     SUCCEEDED [6] done
+```
+
+The action log from the resumed run shows the interrupted step for what it was:
+
+```
+[1] OK        read_file path='hello.py'
+[2] UNCERTAIN edit_file path='hello.py' content='def greet():\n    return "hello"\n'
+[3] OK        read_file path='hello.py'
+[4] OK        replace_in_file path='hello.py' ...
+[5] OK        run_check  -> SUCCEEDED (exit code 0)
+[6] OK        done
+```
+
+### Known limits
+
+- **Cancellation is still only between steps.** `CancelToken` is checked at the
+  top of each iteration, so nothing further starts, but a model request or a
+  command already running is not interrupted. The brief's X4 wants one
+  representative cancellation *during* a request or a command; that is Phase 5
+  and is still open. A command that hangs is already killed with its process
+  group by the existing timeout.
+- The conversation is saved in full. With no history bound (requirement 2, still
+  skipped) a long session file grows with the run.
+- `check_resume` compares the dirty list as sets of `git status --short` lines, so
+  a file that changed *and* was already dirty at the checkpoint is caught by its
+  digest rather than by the list.
+- Resume rebuilds the check result from its status line only, so the resumed
+  model cannot re-read the old failure output. It is told the status, not the text.

@@ -275,6 +275,28 @@ class RepositoryNavigator:
         lines += [f"  {path}" for path in untracked] or ["  (none)"]
         return lines
 
+    def state_summary(self):
+        """(branch, commit, dirty lines) for a checkpoint or a resume check.
+
+        Same read-only commands as git_state, but as plain values instead of
+        report lines. Returns ("", "", []) when git cannot be used at all,
+        because a missing git must not stop a run.
+        """
+        try:
+            lines = self.git_state()
+        except RepositoryError:
+            return "", "", []
+        branch = commit = ""
+        dirty = []
+        for line in lines:
+            if line.startswith("Branch: "):
+                branch = line[len("Branch: "):].strip()
+            elif line.startswith("Commit: "):
+                commit = line[len("Commit: "):].strip()
+            elif line.startswith("  ") and line.strip() != "(none)":
+                dirty.append(line.strip())
+        return branch, commit, dirty
+
     def head_commit(self):
         """The current commit as a plain SHA, or "" if there is none.
 
