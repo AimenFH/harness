@@ -667,5 +667,11 @@ def test_controller_uses_a_given_navigator(repo):
                             RepositoryTools(repo, "readonly"), ExecutionEnvironment(repo),
                             log=lambda _: None, navigator=FakeNavigator())
     controller.run("t")
-    assert tool_result_sent(model, 1) == "Result of git_state:\nBranch: fake"
+    # The navigator's own output reaches the model, inside the untrusted markers
+    # every tool result now carries (see context.py).
+    assert tool_result_sent(model, 1) == (
+        "Result of git_state:\n"
+        "----- BEGIN UNTRUSTED REPOSITORY DATA: git_state -----\n"
+        "Branch: fake\n"
+        "----- END UNTRUSTED REPOSITORY DATA: git_state -----")
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Optional
 
 from cancellation import CancelledError
+from context import ContextManager, wrap_untrusted
 from execution import TEST_COMMANDS, CommandResult, ExecutionError
 from model_client import (EDIT_TOOLS, InvalidActionError, ModelError, initial_messages,
                           validate_tool_call)
@@ -146,6 +147,14 @@ class Controller:
             limits={"max_actions": config.max_actions, "max_retries": config.max_retries},
         )
         self.scope = ScopePolicy(self.spec.allowed_changes)
+        # Context management: the repository map, the file suggestions, and the
+        # bound on the conversation sent to the model (see context.py).
+        self.context = ContextManager(
+            tools, navigator=self.navigator,
+            budget_chars=config.context_budget_chars,
+            keep_turns=config.context_keep_turns,
+            max_output_chars=config.max_output_chars,
+            log=log)
         self.cancel = cancel
         self.session = session
         self.store = store
@@ -174,6 +183,7 @@ class Controller:
             "list_symbols": self._list_symbols,
             "find_symbol": self._find_symbol,
             "module_dependencies": self._module_dependencies,
+            "repo_map": self._repo_map,
             "git_state": self._git_state,
             "replace_in_file": self._replace_in_file,
             "edit_file": self._edit_file,
@@ -198,7 +208,7 @@ class Controller:
         self.repeats = 0
         self.record = TaskRecord(spec=self.spec)
         messages = initial_messages(task, self.config.mode, self._check_names(),
-                                    self.selected_files_text(context_files))
+                                    self.initial_context(task, context_files))
         self._checkpoint(messages, 0, status="running")
         return self._loop(messages, rejected_in_a_row=0)
 
@@ -265,7 +275,12 @@ class Controller:
 
             # 1. Ask the model what to do next.
             try:
-                action = self.model.request_action(messages, self.cancel)
+                # The conversation is rebuilt for every request inside the
+                # documented budget: trusted task card and the newest turns
+                # verbatim, older steps shortened. `messages` keeps the full
+                # history, which is what the session saves.
+                request = self.context.for_model(messages, state=self._state_note())
+                action = self.model.request_action(request, self.cancel)
             except CancelledError as error:
                 # Cancelled while waiting for the model. Whatever it was about
                 # to say is discarded: a late reply cannot start an action.
@@ -334,7 +349,34 @@ class Controller:
                     "repository did not change in between. It is not making progress.",
                 )
 
-    # ----- basic context -----------------------------------------------------
+    # ----- context -----------------------------------------------------------
+
+    def initial_context(self, task, context_files=()):
+        """Everything shown with the task in the first message.
+
+        Trusted first: the task card (scope, checks, starting commit and the
+        acceptance criteria the result is judged by), which no later
+        compression removes. Then the untrusted repository data in one marked
+        block: the repository map, the files the harness suggests for this
+        task, and the content of the files the user selected.
+        """
+        return self.context.initial_context(
+            task, spec=self.spec,
+            selected_files_text=self.selected_files_text(context_files),
+            limits_text=(f"at most {self.config.max_actions} actions, "
+                         f"{self.config.max_retries} rejected requests in a row"),
+            include_map=self.config.context_map)
+
+    def _state_note(self):
+        """The harness's record of progress, refreshed for every request.
+
+        Compression measures a bulky edit argument rather than repeating it, so
+        without this the model has no reliable record of what it has already
+        changed -- and a real run failed exactly there (see context.state_note).
+        """
+        return self.context.state_note(
+            changed_files=self.changed_files,
+            last_check=self.last_check.status() if self.last_check else "")
 
     def selected_files_text(self, paths):
         """Text with the content of the files the user selected for the task.
@@ -485,7 +527,9 @@ class Controller:
             else:
                 self.partly_read.discard(key)
                 self.read_files.add(key)
-        return OK, f"Result of {action.tool}:\n{text}"
+        # Tool output is repository text: it goes back inside untrusted markers,
+        # so a file that tells the model what to do is visibly data (context.py).
+        return OK, f"Result of {action.tool}:\n{wrap_untrusted(action.tool, text)}"
 
     def _deny(self, reason):
         self.counters.denied += 1
@@ -520,6 +564,9 @@ class Controller:
 
     def _module_dependencies(self, path):
         return "\n".join(self.navigator.module_dependencies(path))
+
+    def _repo_map(self, path="."):
+        return "\n".join(self.context.repository_map(path))
 
     def _git_state(self):
         return "\n".join(self.navigator.git_state())

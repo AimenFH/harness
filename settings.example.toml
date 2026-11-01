@@ -15,7 +15,16 @@ num_ctx = 16384               # context window in tokens
 max_actions = 20              # model replies per run
 max_retries = 3               # malformed or denied requests in a row before stopping
 max_output_chars = 10000      # longer tool output is cut and marked [OUTPUT TRUNCATED]
+max_reply_tokens = 1200       # longest reply the model may generate for one action
 command_timeout_seconds = 30  # per check; the check and all its processes are then killed
+
+# Context management (context.py). The budget is the documented size limit for
+# the whole conversation *sent* to the model; the full history is still saved
+# with the session. Roughly 3-4 characters per token, so 24000 stays inside the
+# default num_ctx of 16384 tokens and leaves room for the reply.
+context_budget_chars = 24000  # whole conversation sent to the model, in characters
+context_keep_turns = 3        # newest turns kept word for word; older steps become one line
+context_map = true            # add the repository map and the suggested files to the task
 
 # Optional independent final checks (fixed commands only, inside Docker).
 lint_checks = []               # ["ruff"] to check Python lint

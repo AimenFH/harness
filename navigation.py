@@ -238,6 +238,32 @@ class RepositoryNavigator:
         result.sort(key=lambda i: i.line)
         return result
 
+    # ----- structured results for the context manager ------------------------
+
+    def symbols(self, path):
+        """The Symbols defined in one Python file, as objects rather than text.
+
+        Same parsing as list_symbols (never imports or runs the file); the
+        repository map in context.py needs the fields, not the formatted lines.
+        """
+        return self._symbols(path)
+
+    def import_graph(self, path="."):
+        """{file: {repository files it imports}} for the Python files under `path`.
+
+        Only imports that resolve to a file inside this repository are kept, so
+        the result is the internal dependency graph. A file that cannot be
+        parsed is left out instead of failing the whole graph.
+        """
+        index = self._module_index()
+        graph = {}
+        for file in self._python_files(path):
+            try:
+                graph[file] = {i.path for i in self._imports(file, index) if i.path}
+            except RepositoryError:
+                continue
+        return graph
+
     def _module_index(self):
         """{module name: file} for every Python file in the repository."""
         index = {}

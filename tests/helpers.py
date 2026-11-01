@@ -89,7 +89,14 @@ def make_harness(root, replies, mode="edit", spec=None, cancel=None,
     max_output_chars or allowed_changes. `spec` and `cancel` are passed to the
     Controller: a TaskSpec saved with the run, and a CancelToken to stop it.
     Returns a namespace with: controller, model, tools, executor, log.
+
+    `context_map` defaults to False here, unlike a real run: building the
+    repository map and the file suggestions reads the whole repository through
+    `tools`, which would show up in SpyTools.calls and hide the tool calls a
+    test is actually about. Tests for context management pass context_map=True
+    explicitly (see tests/test_context.py).
     """
+    settings.setdefault("context_map", False)
     task = settings.pop("task", "test task")
     config = Config(root=root, task=task, mode=mode, model="fake", **settings)
     model = ScriptedModelClient(replies)

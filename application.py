@@ -7,7 +7,7 @@ from pathlib import Path
 
 from cancellation import AnyCancel, CancelFile, CancelToken
 from config import MAX_ACTIONS, MAX_OUTPUT_CHARS, MAX_RETRIES, Config
-from controller import CANCELLED, DONE, Controller
+from controller import CANCELLED, Controller
 from execution import DockerSandbox, ExecutionEnvironment
 from model_client import ModelClient, ScriptedModelClient
 from navigation import RepositoryNavigator
@@ -26,7 +26,9 @@ OFFLINE_SCRIPT = [
 # Saved independently of permission-bearing task fields. Resume restores these
 # operational settings; permissions and limits always come from the TaskSpec.
 RUN_SETTINGS = ("model", "ollama_url", "model_timeout_seconds", "num_ctx",
-                "sandbox", "sandbox_image", "lint_checks", "build_checks")
+                "max_reply_tokens",
+                "sandbox", "sandbox_image", "lint_checks", "build_checks",
+                "context_budget_chars", "context_keep_turns", "context_map")
 
 
 def build_model(config):

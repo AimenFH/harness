@@ -27,11 +27,27 @@ MAX_ACTIONS = 20
 MAX_RETRIES = 3
 # Tool output longer than this is cut and marked with [OUTPUT TRUNCATED].
 MAX_OUTPUT_CHARS = 10000
+# Longest reply the model may generate for one action, in tokens. One action is
+# a short JSON object, so this is generous. Without it a model that starts
+# rewriting a whole file keeps generating until the context window is full,
+# which surfaces only as a request timeout; a cut-off reply is instead reported
+# to the model as a malformed one and counted against max_retries.
+MAX_REPLY_TOKENS = 1200
 
 # Context window (tokens) requested from Ollama. Ollama's own default is small
 # (a few thousand tokens) and it silently drops the oldest messages when the
 # conversation is longer, so the model would forget the system prompt and task.
 DEFAULT_NUM_CTX = 16384
+
+# ----- context management (see context.py) -----
+# The documented size limit for the whole conversation sent to the model, in
+# characters. A local model needs roughly 3-4 characters per token, so this sits
+# well inside DEFAULT_NUM_CTX and leaves room for the reply. The full history is
+# still saved with the session: the budget limits what is sent, not what is kept.
+CONTEXT_BUDGET_CHARS = 24000
+# Newest turns (one model reply plus its result) kept word for word; older steps
+# are shortened to one line each.
+CONTEXT_KEEP_TURNS = 3
 
 
 @dataclass
@@ -43,6 +59,7 @@ class OllamaSettings:
     timeout_seconds: int = 300
     temperature: float = 0.0  # 0 = as predictable as possible
     num_ctx: int = DEFAULT_NUM_CTX
+    max_reply_tokens: int = MAX_REPLY_TOKENS
 
 
 @dataclass
@@ -95,6 +112,13 @@ class Config:
     max_actions: int = MAX_ACTIONS
     max_retries: int = MAX_RETRIES
     max_output_chars: int = MAX_OUTPUT_CHARS
+    max_reply_tokens: int = MAX_REPLY_TOKENS
+
+    # Context management. The budget bounds the conversation sent to the model;
+    # context_map adds the repository map and the suggested files to the task.
+    context_budget_chars: int = CONTEXT_BUDGET_CHARS
+    context_keep_turns: int = CONTEXT_KEEP_TURNS
+    context_map: bool = True
 
     sandbox: str = "docker"
     sandbox_image: str = DEFAULT_SANDBOX_IMAGE
@@ -106,6 +130,7 @@ class Config:
             base_url=self.ollama_url,
             timeout_seconds=self.model_timeout_seconds,
             num_ctx=self.num_ctx,
+            max_reply_tokens=self.max_reply_tokens,
         )
 
     def summary(self):
@@ -120,8 +145,16 @@ class Config:
             f"Allowed: {', '.join(self.allowed_changes) or 'any file in the repository'}",
             f"Session: {self.session_dir or '(not saved)'}",
             f"Sandbox: {self.sandbox_text()}",
+            f"Context: {self.context_text()}",
         ]
         return "\n".join(lines)
+
+    def context_text(self):
+        """How the conversation sent to the model is bounded (see context.py)."""
+        parts = [f"budget {self.context_budget_chars} characters",
+                 f"last {self.context_keep_turns} turns verbatim"]
+        parts.append("repository map on" if self.context_map else "repository map off")
+        return ", ".join(parts)
 
     def sandbox_text(self):
         if self.sandbox == "none":
@@ -132,8 +165,10 @@ class Config:
 # Settings a settings file may change (see settings.example.toml).
 # Everything else comes from the command line.
 SETTINGS_KEYS = ("ollama_url", "model_timeout_seconds", "num_ctx", "command_timeout_seconds",
-                 "max_actions", "max_retries", "max_output_chars", "sandbox", "sandbox_image",
-                 "lint_checks", "build_checks")
+                 "max_actions", "max_retries", "max_output_chars", "max_reply_tokens",
+                 "sandbox", "sandbox_image",
+                 "lint_checks", "build_checks",
+                 "context_budget_chars", "context_keep_turns", "context_map")
 
 
 def load_settings(path):
@@ -161,6 +196,9 @@ def load_settings(path):
             if not isinstance(value, list) or any(not isinstance(n, str) or n not in allowed for n in value):
                 raise ValueError(f"setting {key!r} must be an array of check names: {', '.join(allowed)}")
             data[key] = tuple(dict.fromkeys(value))
+        elif expected is bool:
+            if not isinstance(value, bool):
+                raise ValueError(f"setting {key!r} must be true or false")
         elif expected is int:
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"setting {key!r} must be a whole number above 0")

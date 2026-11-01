@@ -147,7 +147,65 @@ def test_client_sends_request_and_returns_action(client, monkeypatch):
     assert sent["payload"]["stream"] is False
     assert sent["payload"]["messages"] == messages
     assert sent["payload"]["options"]["num_ctx"] == 16384
+    assert sent["payload"]["options"]["num_predict"] == 1200  # one action is short
     assert sent["timeout"] == 300
+
+
+def test_a_reply_cut_off_at_the_token_limit_is_a_malformed_reply(client, monkeypatch):
+    """A half-written action must never be parsed, and must not be fatal.
+
+    Without the num_predict cap, a model that starts rewriting a whole file
+    generates until the context window is full; that only ever showed up as a
+    request timeout, which ends the run. Cut off, it is a malformed reply: the
+    model is told why, and max_retries bounds it.
+    """
+    half = '{"tool": "edit_file", "arguments": {"path": "a.py", "content": "def f('
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        body={"message": {"role": "assistant", "content": half}, "done_reason": "length"}))
+
+    with pytest.raises(InvalidActionError) as error:
+        client.request_action(initial_messages("Add expiry"))
+
+    assert "cut off after 1200 tokens" in str(error.value)
+    assert "replace_in_file" in str(error.value)
+    assert error.value.raw == half   # the controller shows it back to the model
+
+
+def test_a_cut_off_reply_is_echoed_back_short_not_in_full(client, monkeypatch):
+    """The half-written file must not come back into the conversation.
+
+    The controller shows a malformed reply to the model so it can see its
+    mistake. Echoing 4 700 characters of an abandoned whole-file rewrite costs
+    a large share of the context budget and is exactly what makes a model carry
+    on writing the same file -- observed in a real run before this was fixed.
+    """
+    giant = '{"tool": "edit_file", "arguments": {"path": "a.py", "content": "' + "x" * 5000
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        body={"message": {"content": giant}, "done_reason": "length"}))
+
+    with pytest.raises(InvalidActionError) as error:
+        client.request_action(initial_messages("Add expiry"))
+
+    echoed = error.value.raw
+    assert len(echoed) < 400 < len(giant)
+    assert echoed.startswith('{"tool": "edit_file"')      # which action was tried
+    assert f"CUT OFF AT THE REPLY LIMIT after {len(giant)} characters" in echoed
+
+
+def test_cut_off_preview_keeps_a_short_reply_whole():
+    from model_client import cut_off_preview
+
+    assert cut_off_preview('{"tool": "done"}') == '{"tool": "done"}'
+    assert cut_off_preview("a" * 250, keep=100).startswith("a" * 100)
+    assert "CUT OFF AT THE REPLY LIMIT after 250 characters" in cut_off_preview("a" * 250, keep=100)
+
+
+def test_a_complete_reply_that_stopped_normally_is_parsed(client, monkeypatch):
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        body={"message": {"content": '{"tool": "git_state", "arguments": {}}'},
+              "done_reason": "stop"}))
+
+    assert client.request_action(initial_messages("Look around")).tool == "git_state"
 
 
 def test_client_rejects_malformed_model_output(client, monkeypatch):

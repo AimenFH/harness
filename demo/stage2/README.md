@@ -98,10 +98,12 @@ passes, and all 24 protected regression checks pass. Its zero exit code means
 **the baseline was demonstrated**, not that feature acceptance passed. Running
 `acceptance` itself currently exits 1, correctly reporting a failed feature suite.
 
-Recorded evidence: [BASELINE.md](BASELINE.md), [baseline/proof.json](baseline/proof.json),
-[baseline/task.json](baseline/task.json), and the full logs in [baseline/](baseline/).
-No manual feature implementation, scripted reference patch, or real-model run was
-performed in this preparation phase.
+Recorded evidence: [baseline/proof.json](baseline/proof.json),
+[baseline/task.json](baseline/task.json), [baseline/environment.json](baseline/environment.json),
+and the full logs in [baseline/](baseline/). No manual feature implementation,
+scripted reference patch, or real-model run was performed in this preparation
+phase. The real-model run that followed it is in
+[../results-stage2/RESULTS.md](../results-stage2/RESULTS.md).
 
 ## Next phase only: let the harness implement it
 
