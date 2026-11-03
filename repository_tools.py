@@ -4,8 +4,13 @@ Every tool goes through resolve_path(), which turns the requested path into a
 real absolute path and refuses anything that ends up outside the
 repository root or inside the .git folder. These tools only touch files;
 they never run commands.
+
+One more rule guards writes: a Python file that parses before a change must
+still parse after it (see syntax_problem). Parsing is ast.parse only, so
+repository code is never imported or executed.
 """
 
+import ast
 import os
 from pathlib import Path
 
@@ -20,6 +25,23 @@ PROTECTED_DIRS = {".git"}
 
 # Files larger than this are not read (protects memory; output is cut anyway).
 MAX_FILE_BYTES = 1_000_000
+
+
+def parse_error(text):
+    """"line 43: unmatched ')'" if `text` is not valid Python, else None.
+
+    None for text that cannot be parsed at all (not a string): the caller
+    treats that as "cannot judge" rather than as a syntax error.
+    """
+    if text is None:
+        return None
+    try:
+        ast.parse(text)
+    except SyntaxError as error:
+        return f"line {error.lineno}: {error.msg}"
+    except (ValueError, RecursionError, MemoryError) as error:
+        return type(error).__name__
+    return None
 
 
 class RepositoryError(Exception):
@@ -121,6 +143,44 @@ class RepositoryTools:
                     matches.append(f"{relative_path}:{line_number}: {line.strip()}")
         return matches
 
+    def syntax_problem(self, target, content):
+        """Why `content` must not be written to `target`, or "" if it may be.
+
+        A Python file that parses now has to still parse after the change. One
+        broken edit makes every check fail at once -- not with a test failure
+        but with a collection error -- and a model that cannot match the text
+        it just broke may never repair it. Refusing the write keeps the file
+        working and tells the model exactly which line is wrong.
+
+        Parsing is ast.parse only: nothing is imported, nothing is executed.
+
+        A file that is ALREADY unparsable is never blocked, or a repair would
+        be impossible. Non-Python files are not checked at all: this is a
+        safety rule for the one language the harness understands, not a
+        formatter.
+        """
+        if not str(target).endswith(".py"):
+            return ""
+        error = parse_error(content)
+        if not error:
+            return ""
+        if target.exists():
+            before = self._text_or_none(target)
+            if before is None or parse_error(before) is not None:
+                # Cannot be judged, or already broken: do not block, so a
+                # repair is always possible and odd files are left to the checks.
+                return ""
+        return (f"Refused: this change would leave {self._relative(target)!r} with "
+                f"invalid Python ({error}). The file was NOT changed. Correct the "
+                "syntax of your replacement text and send the change again.")
+
+    def _text_or_none(self, target):
+        """The file's text, or None if it cannot be read as UTF-8 text."""
+        try:
+            return target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
     def replace_in_file(self, path, old, new):
         """Replace the one occurrence of `old` with `new` in a file. Edit mode only.
 
@@ -153,6 +213,11 @@ class RepositoryTools:
         target = self.resolve_path(path)
         if target.is_dir():
             raise RepositoryError(f"Cannot write to a directory: {path!r}")
+        # Both write tools end up here, so this one check covers replace_in_file
+        # as well. The file is not touched when the change would break it.
+        problem = self.syntax_problem(target, content)
+        if problem:
+            raise RepositoryError(problem)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")

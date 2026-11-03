@@ -189,3 +189,98 @@ def test_replace_refused_in_readonly_mode_and_outside_root(repo):
     with pytest.raises(AccessDeniedError, match="outside"):
         RepositoryTools(repo, mode="edit").replace_in_file("../../outside.txt", "secret", "x")
     assert (repo.parent.parent / "outside.txt").read_text() == "secret\n"
+
+
+# ----- a write must not leave a Python file unparsable -----------------------
+#
+# One broken edit makes every check fail at once -- with a collection error, not
+# a test failure -- and a model that cannot match the text it just broke may
+# never repair it. This was the exact failure of the Stage 2 feature run; see
+# demo/results-stage2/RESULTS.md.
+
+def test_parse_error_reports_the_line_and_the_reason():
+    from repository_tools import parse_error
+
+    assert parse_error("a = 1\n") is None
+    assert parse_error("") is None                      # an empty file is valid Python
+    assert parse_error(None) is None                    # nothing to judge
+    assert "line 2" in parse_error("a = 1\nb = (\n")
+    assert "line 1" in parse_error("def f(:\n")
+
+
+def test_an_edit_that_would_break_python_is_refused(repo):
+    tools = RepositoryTools(repo, mode="edit")
+    before = (repo / "src" / "calc.py").read_text()
+
+    with pytest.raises(RepositoryError, match="would leave .* invalid Python") as error:
+        tools.edit_file("src/calc.py", "def total(items):\n    return sum(items) + 1\n}\n")
+
+    assert "NOT changed" in str(error.value)
+    assert "line 3" in str(error.value)                 # says where the problem is
+    assert (repo / "src" / "calc.py").read_text() == before
+
+
+def test_a_replacement_that_would_break_python_is_refused(repo):
+    """The real case: replace_in_file writes through edit_file, so it is covered."""
+    tools = RepositoryTools(repo, mode="edit")
+    before = (repo / "src" / "calc.py").read_text()
+
+    with pytest.raises(RepositoryError, match="would leave .* invalid Python"):
+        tools.replace_in_file("src/calc.py", "return sum(items) + 1",
+                              "return sum(items) + 1\n}), extra={")
+
+    assert (repo / "src" / "calc.py").read_text() == before
+
+
+def test_a_valid_change_is_still_written(repo):
+    tools = RepositoryTools(repo, mode="edit")
+
+    tools.replace_in_file("src/calc.py", "sum(items) + 1", "sum(items)")
+    tools.edit_file("src/new.py", "from datetime import date\n\n\nVALUE = date.today()\n")
+
+    assert (repo / "src" / "calc.py").read_text() == "def total(items):\n    return sum(items)\n"
+    assert "VALUE" in (repo / "src" / "new.py").read_text()
+
+
+def test_a_new_python_file_may_not_be_created_broken(repo):
+    tools = RepositoryTools(repo, mode="edit")
+
+    with pytest.raises(RepositoryError, match="invalid Python"):
+        tools.edit_file("src/fresh.py", "def f(:\n")
+
+    assert not (repo / "src" / "fresh.py").exists()
+
+
+def test_an_already_broken_file_may_still_be_repaired(repo):
+    """Never block a repair, or a broken file could never be fixed."""
+    broken = repo / "src" / "oops.py"
+    broken.write_text("def f(:\n")
+    tools = RepositoryTools(repo, mode="edit")
+
+    # Still broken, but allowed: the model may need more than one step.
+    tools.edit_file("src/oops.py", "def f(:\n    pass\n")
+    # And the repair itself goes through.
+    tools.edit_file("src/oops.py", "def f():\n    pass\n")
+
+    assert broken.read_text() == "def f():\n    pass\n"
+
+
+def test_files_that_are_not_python_are_never_syntax_checked(repo):
+    tools = RepositoryTools(repo, mode="edit")
+
+    tools.edit_file("README.md", "# Demo\n} not python at all {\n")
+    tools.edit_file("data.json", "{broken json,,,}")
+
+    assert "not python" in (repo / "README.md").read_text()
+    assert (repo / "data.json").read_text() == "{broken json,,,}"
+
+
+def test_an_unreadable_existing_file_is_not_judged(repo):
+    """A binary .py cannot be compared, so the write is left to the checks."""
+    weird = repo / "src" / "binary.py"
+    weird.write_bytes(b"\xff\xfe\x00not utf8")
+    tools = RepositoryTools(repo, mode="edit")
+
+    tools.edit_file("src/binary.py", "def f(:\n")
+
+    assert (repo / "src" / "binary.py").read_text() == "def f(:\n"

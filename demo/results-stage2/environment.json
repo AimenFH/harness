@@ -1,15 +1,14 @@
 {
   "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
   "python": "3.14.7 (v3.14.7:823f0323ee6, Aug  5 2026, 07:07:01) [Clang 21.0.0 (clang-2100.1.1.101)]",
-  "harness_start_commit": "541d953c92678e533c5c6502f63c342b91fd63a9",
+  "harness_commit": "e9d34a419358ca9dbaf028c15f4d370e9bf5a595",
+  "harness_dirty": true,
   "ollama_tags": {
     "models": [
       {
         "name": "qwen3:8b",
-        "model": "qwen3:8b",
-        "modified_at": "2026-10-14T20:32:34.855582911+02:00",
         "size": 5225388164,
-        "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+        "digest": "500a1f067a9f...",
         "details": {
           "parent_model": "",
           "format": "gguf",
@@ -31,10 +30,8 @@
       },
       {
         "name": "qwen2.5-coder:7b",
-        "model": "qwen2.5-coder:7b",
-        "modified_at": "2026-10-06T22:59:59.770713118+02:00",
         "size": 4683087561,
-        "digest": "dae161e27b0e90dd1856c8bb3209201fd6736d8eb66298e75ed87571486f4364",
+        "digest": "dae161e27b0e...",
         "details": {
           "parent_model": "",
           "format": "gguf",
@@ -56,10 +53,8 @@
       },
       {
         "name": "qwen2.5-coder:3b",
-        "model": "qwen2.5-coder:3b",
-        "modified_at": "2026-09-19T12:32:58.725267777+02:00",
         "size": 1929912626,
-        "digest": "f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225",
+        "digest": "f72c60cabf62...",
         "details": {
           "parent_model": "",
           "format": "gguf",
@@ -99,7 +94,9 @@
     "regression/LICENSE.cosmicpython": "1aa2387124c47ab728c0df6ad9b628fb0783ede816150adbeb166c2e9d49bdd2"
   },
   "execution": "local macOS; Ollama on localhost:11434; target checks in Docker",
-  "preferred_model": "qwen2.5-coder:7b",
+  "model_used": "qwen2.5-coder:7b",
+  "run_settings": "# Settings for the Stage 2 feature run with a real model (qwen2.5-coder:7b).\n# The model runs locally in Ollama: no account, no API key, no secrets here.\n\nmodel_timeout_seconds = 420   # one Ollama reply; the bounded context keeps replies fast\nnum_ctx = 16384               # context window asked of Ollama\n\nmax_actions = 60\nmax_retries = 3\nmax_output_chars = 10000\nmax_reply_tokens = 1200       # the shipped default; one action is a short JSON object\n\n# Context management (context.py). The budget is the documented size limit for\n# the whole conversation sent to the model; the full history stays in the session.\ncontext_budget_chars = 24000\ncontext_keep_turns = 3\ncontext_map = true\n\nsandbox = \"docker\"\nsandbox_image = \"harness-sandbox\"\n",
+  "run_settings_sha256": "8e470a94cf510294c85f88868b1b4ce9361f6bdd08878f66c1bd6e2bc93b249e",
   "feature_source_manually_edited": false,
   "protected_tests_edited": false
 }

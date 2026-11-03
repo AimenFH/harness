@@ -105,9 +105,14 @@ scripted reference patch, or real-model run was performed in this preparation
 phase. The real-model run that followed it is in
 [../results-stage2/RESULTS.md](../results-stage2/RESULTS.md).
 
-## Next phase only: let the harness implement it
+## Letting the harness implement it
 
-The following is documented for the next phase; it has **not been run**:
+This has since been run with a real local model. The result — five runs, the
+three harness defects the live runs exposed, and the protected checks' verdict
+on the best one — is in
+[../results-stage2/RESULTS.md](../results-stage2/RESULTS.md). The feature
+**does not** pass acceptance yet; that file says exactly how far the model got
+and what is needed next. The commands:
 
 ```bash
 PYTEST_ADDOPTS="--ignore=tests/e2e" .venv/bin/python main.py start \
@@ -124,10 +129,10 @@ PYTEST_ADDOPTS="--ignore=tests/e2e" .venv/bin/python main.py start \
 .venv/bin/python demo/stage2.py verify
 ```
 
-The model name may be selected for the real run. Existing target tests are useful
-feedback for the harness, but only the external protected checks prove the feature.
-`verify` requires acceptance, protected regression, and the multi-module scope gate
-to pass. The harness verifier currently reports externally recorded acceptance as
-unfinished until checked separately; never equate the model's `done` with feature
-acceptance. Record the actual model run, final diff, test results and any manual
-help in the next phase. Do not use the Stage 1 `rehearse` command for this feature.
+Existing target tests are useful feedback for the harness, but only the external
+protected checks prove the feature. `verify` requires acceptance, protected
+regression, and the multi-module scope gate to pass. The harness verifier
+reports externally recorded acceptance as unfinished until checked separately;
+never equate the model's `done` with feature acceptance — in the recorded runs
+the model never reached `done`, and the protected checks failed the result it did
+produce. Do not use the Stage 1 `rehearse` command for this feature.

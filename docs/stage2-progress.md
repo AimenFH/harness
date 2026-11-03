@@ -13,8 +13,13 @@ This file records each phase: what was checked or built, test results, and open 
 | 6 | Session storage and safe resume | **done** |
 | 7 | Verification extras (lint/build checks, unfinished work) + check loop | **done** |
 | 8 | CLI subcommands, allowed projects, interface/core split | **done** |
-| 9 | Stage 2 feature demo (task, acceptance + regression checks, real-model run) | **done** |
+| 9 | Stage 2 feature demo (task, acceptance + regression checks, real-model run) | **run; feature not passing** |
 | 10 | README, diagrams, results | **done** |
+
+Phase 9 is the one part of Stage 2 that is not green: the harness was run with
+real local models and behaved correctly throughout, but neither model could
+implement the feature, so the protected acceptance check still fails. See
+[../demo/results-stage2/RESULTS.md](../demo/results-stage2/RESULTS.md).
 
 ---
 
@@ -1444,3 +1449,181 @@ of this phase: **bounding context is not only about making the prompt smaller.**
 It is about deciding what must always be there. Twice the budget was being spent
 on something worthless (a discarded half-written file), and once something
 essential was missing because it was cheap to leave out.
+
+---
+
+## Phases 9 and 10 — the real-model feature run (2026-11-01)
+
+Full record, with the exact commands, every attempt and the protected checks'
+verdict: [`demo/results-stage2/RESULTS.md`](../demo/results-stage2/RESULTS.md).
+The short version, because this is the part that did not go to plan.
+
+### What happened
+
+Five runs against the prepared task at `97267473`, in a disposable copy at
+`~/harness-demo/stage2-run`, with the protected checks outside the agent's
+writable area and running in Docker.
+
+| # | Model | Stopped on | Finding |
+|---|---|---|---|
+| 1 | `qwen2.5-coder:7b` | model timeout, action 6 | no cap on reply length |
+| 2 | `qwen2.5-coder:7b` | retry limit, action 8 | cut-off reply echoed back in full |
+| 3 | `qwen2.5-coder:7b` | no-progress rule, action 15 | the model could not see its own edits |
+| 4 | `qwen2.5-coder:7b` | no-progress rule, action 29 | **best run**: all three modules edited, check run, failure worked — then invalid Python in `adapters/orm.py` it could not repair |
+| 5 | `qwen3:8b` | retry limit, action 7 | a reasoning model spends the whole token limit thinking; content empty |
+
+Runs 1–3 each exposed a genuine harness defect, all three fixed and documented
+in the Phase 3 follow-up above. Run 4 is the one the protected checks judged.
+
+### The verdict on run 4
+
+```text
+acceptance: FAIL; exit=2; counts=1
+regression: FAIL; exit=4; counts=0
+Scope:      PASS; changed=['adapters/orm.py', 'domain/model.py', 'service_layer/services.py']
+```
+
+Scope passed — only the three allowed modules, at least two of them, and an
+attempt to edit `tests/conftest.py` was denied. Acceptance and regression both
+failed at **collection**, not at a test: the model left
+`SyntaxError: unmatched ')'` at `adapters/orm.py:43`. Exit 2 and exit 4 with zero
+tests were reported as FAILED, which is the strict policy working — a broken
+edit must not be able to look like a clean run.
+
+It had got the signatures right (`expires_at` on `OrderLine` and both
+`allocate`s, `now` on the service, a nullable date column in the ORM table) and
+was missing the behaviour (`Batch.release_expired`, `services.release_expired`,
+`InvalidExpiry`, and passing `expires_at` into the `OrderLine` the service
+builds).
+
+### Honest conclusion
+
+The harness is doing its job. Navigation found the right modules in five
+actions; file selection ranked the three in-scope modules top; the context
+budget engaged on every request from action 13 (36 161 characters in 40 messages
+down to 16 346 in 10) while the task card and progress note stayed verbatim;
+scope was enforced before the write, not audited after; failed checks drove
+fixes; every check ran contained with no network on a read-only mount; and all
+five runs stopped on a named rule with a reason in words rather than hanging or
+reporting a false pass.
+
+What is missing is model capability. A 7B local coder model could not implement
+this feature correctly, and the 8B reasoning model could not keep to
+one-action-per-reply at all. **The feature is not implemented and the acceptance
+check does not pass.** That is recorded as such everywhere rather than papered
+over, and `RESULTS.md` names what to try in Part 3 — first among them refusing
+an edit that leaves a Python file unparsable, which is the single change most
+likely to turn run 4 into a pass and which the AST parsing already in
+`navigation.py` makes almost free.
+
+---
+
+## Phase 11 — a write may not break the file (2026-11-03)
+
+The follow-up `RESULTS.md` named as the most likely fix for the feature run, now
+built. Run 4 of the feature run failed for exactly one reason: the model wrote
+invalid Python into `adapters/orm.py` and could never match the text it had
+broken, so it could not repair it. Everything downstream fell over with it —
+both protected suites failed at **collection**, not on a test.
+
+### The rule
+
+A Python file that parses before a change must still parse after it.
+
+The check lives in `RepositoryTools.syntax_problem()` and runs in
+`edit_file()`, **before** anything is written. That is the only choke point
+needed: `replace_in_file()` performs its write by calling `edit_file()`, so one
+check covers both tools with no duplicated replacement logic.
+
+```text
+Refused: this change would leave 'adapters/orm.py' with invalid Python
+(line 43: unmatched ')'). The file was NOT changed. Correct the syntax of your
+replacement text and send the change again.
+```
+
+Four deliberate limits on the rule:
+
+| Limit | Why |
+|---|---|
+| `ast.parse` only | Same guarantee as `navigation.py`: repository code is parsed, never imported or executed. Free to reuse. |
+| Only `.py` files | This is a safety rule for the one language the harness understands, not a formatter. Markdown, JSON and the rest are untouched. |
+| An **already** unparsable file is never blocked | Otherwise a broken file could never be repaired — the rule would create the deadlock it exists to prevent. |
+| A file that cannot be read as UTF-8 text is not judged | Nothing to compare against; left to the checks. |
+
+It is reported as a tool error, not a permission denial, so the model can send a
+corrected edit immediately; an *identical* repeat is still caught by the Phase 4
+no-progress rule, so nothing can spin.
+
+### Tests
+
+Nine new tests. Eight in `tests/test_repository_tools.py` — `parse_error`
+line/reason reporting, a breaking `edit_file` refused with the file unchanged, a
+breaking `replace_in_file` refused (the real case, through the shared write
+path), valid changes still written, a new file not creatable broken, an
+already-broken file still repairable in one or two steps, non-Python files never
+checked, and an unreadable `.py` left alone. One in
+`tests/test_task_execution.py` reproduces the feature run's exact failure shape
+through the controller: the model sends the unbalanced bracket, is told the line,
+sends a valid change instead, and the run reaches `done` with a passing check —
+where before the file stayed broken and the run stopped.
+
+Suite: **492 passed** (483 + 9). Ruff clean on every changed file.
+
+### Honest note on the first attempt at this
+
+The first version of `syntax_problem` treated "file cannot be read" and "file
+parses fine" the same way, because `parse_error(None)` returns `None` for both.
+An unreadable `.py` was therefore refused instead of allowed. The test written
+for that case caught it immediately, which is the argument for writing the
+awkward cases as tests rather than reasoning about them.
+
+### Phase 11 validation — the gate works, and found the next defect
+
+Run 6 of the feature run (`qwen2.5-coder:7b`, same settings as run 4, so a clean
+comparison). The gate **fired once and did exactly its job**:
+
+```text
+Refused: this change would leave 'adapters/orm.py' with invalid Python
+(line 43: unmatched ')'). The file was NOT changed.
+```
+
+`adapters/orm.py` stayed parsable for the remaining 44 actions, where in run 4
+that same mistake had ended the run. Both protected suites now **collect and
+run** instead of failing at collection — acceptance `1 passed, 20 failed, 2
+errors`, real test results rather than an import error.
+
+Then the model found a new way to waste the run, and the harness let it:
+
+```text
+old = 'mapper(model.OrderLine, order_lines,'
+new = 'mapper(model.OrderLine, order_lines, properties={ ... }),\n    mapper(model.Batch, batches,'
+```
+
+The `new` text **contains** the `old` text. After each replacement `old` is still
+present exactly once, so the identical call succeeds again and appends another
+duplicate block. It was applied **22 times**, `adapters/orm.py` grew to 120
+lines of repeated mappers, every `run_check` in between failed, and the run
+burned all 60 actions.
+
+Why no rule caught it: `failed_actions` only remembers actions that **failed**,
+and `_record_change()` clears that memory and resets `repeats` whenever a file
+really changes — which this action did, every time. The result was also
+syntactically valid, so the new gate had no reason to fire.
+
+**The no-progress rule covers futile *failed* actions but not futile
+*successful* ones.** That is the one harness defect from these six runs that is
+still open, and it is the first item under "what is needed" in
+[`demo/results-stage2/RESULTS.md`](../demo/results-stage2/RESULTS.md). The fix
+mirrors `failed_actions`: refuse an identical `(tool, arguments)` that has
+already been applied, and count it like the existing repeat denials.
+
+### The pattern, after six runs
+
+Each harness fix has exposed the next *model* weakness rather than another
+harness one, and across six runs the model added only *signatures* —
+`expires_at` on `OrderLine` and both `allocate` functions, `now` on the service,
+a nullable column — and never reached `Batch.release_expired`,
+`services.release_expired` or `services.InvalidExpiry`, which is what the
+feature actually consists of. The honest reading is that this task is beyond a
+7B local model, and that a larger model is now the control worth running before
+assuming anything else is missing from the harness.

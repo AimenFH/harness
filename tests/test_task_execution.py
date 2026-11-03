@@ -22,7 +22,8 @@ from controller import FAILED as FAILED_OUTCOME
 from model_client import Action
 from task_record import (CancelToken, ScopeError, ScopePolicy, TaskRecord, TaskSpec,
                          spec_from_config)
-from tests.helpers import PASSING_TEST, hello_repo, make_harness, write_repo
+from tests.helpers import (PASSING_TEST, hello_repo, make_harness,
+                           tool_result_sent, write_repo)
 
 # hello.py returns the wrong word; tests/test_hello.py expects "hello".
 WRONG_HELLO = 'def greet():\n    return "goodbye"\n'
@@ -755,3 +756,41 @@ def test_the_prompt_warns_against_placeholder_rewrites(tmp_path):
     prompt = build_system_prompt(mode="edit")
     assert "# existing code" in prompt
     assert "read_file it first" in prompt or "not read in this run" in prompt
+
+
+def test_an_edit_that_would_break_the_file_is_refused_and_the_loop_recovers(tmp_path):
+    """The Stage 2 feature run's actual failure, now caught before the write.
+
+    A real qwen2.5-coder run wrote invalid Python into adapters/orm.py. Every
+    check then failed at collection, and the model could not match the text it
+    had just broken, so the run stopped with the file still broken. The write
+    is now refused with the offending line, the file keeps working, and the
+    next attempt can succeed. See demo/results-stage2/RESULTS.md.
+    """
+    root = write_repo(tmp_path / "repo", {"hello.py": RIGHT_HELLO,
+                                          "tests/test_hello.py": PASSING_TEST})
+    h = make_harness(root, [
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},
+        # Unbalanced bracket, exactly the shape the real model produced.
+        {"tool": "replace_in_file", "arguments": {
+            "path": "hello.py", "old": 'return "hello"',
+            "new": 'return "hello"\n    }), properties={'}},
+        # Told what was wrong, it sends a valid change instead.
+        {"tool": "replace_in_file", "arguments": {
+            "path": "hello.py", "old": 'return "hello"',
+            "new": 'return "hello"  # checked'}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "edited and checked"},
+    ], allowed_changes=("hello.py",))
+
+    result = h.controller.run("Change the greeting")
+
+    assert result.status == DONE
+    assert result.succeeded
+    assert result.counters.tool_errors == 1
+    # The refusal names the file, the reason and the line, and says nothing changed.
+    refused = tool_result_sent(h.model, 2)
+    assert "invalid Python" in refused and "NOT changed" in refused
+    assert "line" in refused
+    # The file was never broken, so the check at the end could still run.
+    assert (root / "hello.py").read_text() == 'def greet():\n    return "hello"  # checked\n'

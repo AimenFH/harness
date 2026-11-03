@@ -192,6 +192,25 @@ def test_a_cut_off_reply_is_echoed_back_short_not_in_full(client, monkeypatch):
     assert f"CUT OFF AT THE REPLY LIMIT after {len(giant)} characters" in echoed
 
 
+def test_a_reply_that_produced_nothing_gets_different_advice(client, monkeypatch):
+    """A reasoning model can spend the whole token limit on thinking.
+
+    Observed with qwen3:8b: three replies in a row, 3000 tokens each, content
+    empty. "Do not send a whole file" would be wrong advice about something
+    that never happened, so the empty case says what actually went wrong.
+    """
+    monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse(
+        body={"message": {"content": "   "}, "done_reason": "length"}))
+
+    with pytest.raises(InvalidActionError) as error:
+        client.request_action(initial_messages("Add expiry"))
+
+    assert "without producing any action at all" in str(error.value)
+    assert "no explanation" in str(error.value)
+    assert "whole file" not in str(error.value)
+    assert error.value.raw == ""
+
+
 def test_cut_off_preview_keeps_a_short_reply_whole():
     from model_client import cut_off_preview
 

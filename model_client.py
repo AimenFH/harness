@@ -383,6 +383,17 @@ class ModelClient:
         # model that starts rewriting a whole file keeps generating until the
         # context window is full, which only shows up as a request timeout.
         if data.get("done_reason") == "length":
+            if not content.strip():
+                # A reasoning model's thinking counts towards num_predict, so it
+                # can spend the whole limit before writing any of the answer.
+                # Observed with qwen3:8b: three replies in a row, 3000 tokens
+                # each, content empty. Saying "do not send a whole file" there
+                # would be wrong advice about something that never happened.
+                raise InvalidActionError(
+                    f"your reply used all {self.settings.max_reply_tokens} tokens "
+                    "without producing any action at all. If you are reasoning "
+                    "before answering, stop: answer immediately with ONE short "
+                    "JSON action and no explanation.", raw="")
             raise InvalidActionError(
                 f"your reply was cut off after {self.settings.max_reply_tokens} tokens "
                 "and was discarded. Do NOT send a whole file. Use replace_in_file "

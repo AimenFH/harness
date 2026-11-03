@@ -95,7 +95,7 @@ The full history is always saved with the session: the budget limits what is
 | `session.py` | **Persistence** | Atomic checkpoints, saved history/checks/diff, safe-resume validation, one runner per task. |
 | `controller.py` | **Orchestration** | The agentic loop: Request $\rightarrow$ Validate $\rightarrow$ Execute $\rightarrow$ Return. |
 | `model_client.py` | **LLM Bridge** | Integration with Ollama; handles system prompting and JSON parsing. |
-| `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`. |
+| `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`; a write may not leave a Python file unparsable (`syntax_problem`, AST only). |
 | `navigation.py` | **Navigation** | Read-only, language-aware tools: `find_files`, `list_symbols`, `find_symbol` (AST-based, never runs code), `module_dependencies` (imports and importers), `git_state` (branch, commit, changed/untracked files); structured `symbols()` and `import_graph()` for the context manager. |
 | `context.py` | **Context management** | Compact repository map (`repo_map`), task-relevant file selection, and the conversation rebuilt for every request inside `context_budget_chars`; trusted task card never compressed, repository text and tool output always marked untrusted. |
 | `execution.py` | **Environment** | Fixed pytest/unittest, Ruff and compileall commands; Docker containment, timeouts, cleanup, test counts and skip detection. |
@@ -123,7 +123,8 @@ To prevent the LLM from performing destructive actions or accessing sensitive da
     *   **Context Budget**: The whole conversation sent to the model is rebuilt inside `context_budget_chars` for every request (see [Context management](#context-management)).
     *   **Reply Limit**: `max_reply_tokens` caps one model reply. One action is a short JSON object; without the cap a model that starts rewriting a whole file generates until the context window is full, which only ever surfaces as a request timeout. A cut-off reply is reported to the model as a malformed one and counted, never parsed. It counts *generated* tokens, so for a reasoning model — where most of them are hidden thinking — it has to be set higher than the default (see [the Stage 2 feature run](demo/results-stage2/RESULTS.md)).
     *   **Denied Action Tracking**: The session terminates if the model repeatedly requests forbidden actions.
-5.  **`done` Must Be Earned**: After changing files, the model may only call `done` once a check has *passed* since its last change. Otherwise `done` is refused and the model is told why (3 refusals in a row stop the run). With no changes, `done` is always allowed, so the model can still report that it could not fix the task.
+5.  **A Write May Not Break The File**: A Python file that parses before a change must still parse after it. The resulting text is checked with `ast.parse` (parsed, never imported or run) *before* anything is written; if it would be invalid, the write is refused with the offending line and the file is left untouched. One broken edit otherwise makes every check fail at once — with a collection error, not a test failure — and a model that cannot match the text it just broke may never repair it. A file that is *already* unparsable is never blocked, so a repair is always possible, and non-Python files are not checked. This is what the Stage 2 feature run needed; see [demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
+6.  **`done` Must Be Earned**: After changing files, the model may only call `done` once a check has *passed* since its last change. Otherwise `done` is refused and the model is told why (3 refusals in a row stop the run). With no changes, `done` is always allowed, so the model can still report that it could not fix the task.
 
 ---
 
@@ -471,7 +472,7 @@ No tests need Ollama, an account or API key. Parser, safety and scripted-model u
 tests remain independent of a live model; repository checks run inside Docker.
 
 **Coverage includes**:
-- ✅ **Tool Safety**: Verification that paths outside `--root` are rejected.
+- ✅ **Tool Safety**: Verification that paths outside `--root` are rejected, and that a write cannot leave a Python file unparsable (while an already-broken file can still be repaired).
 - ✅ **Controller Logic**: Validation of the action loop and tool routing.
 - ✅ **Limit Enforcement**: Testing that action limits and output truncations work.
 - ✅ **Error Handling**: Ensuring invalid tool requests return clear errors.
