@@ -1,0 +1,9 @@
+HARNESS_STAGE2_REPORT={"suite": "regression", "exit_code": 4, "tests": 0, "passed": 0, "failed": 0, "errors": 1, "skipped": 0, "cases": [], "missing_junit": true}
+
+ImportError while loading conftest '/protected/regression/tests/conftest.py'.
+/protected/regression/tests/conftest.py:12: in <module>
+    from adapters.orm import metadata, start_mappers
+E     File "/work/adapters/orm.py", line 43
+E       })
+E        ^
+E   SyntaxError: unmatched ')'

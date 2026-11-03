@@ -1,0 +1,81 @@
+diff --git a/adapters/orm.py b/adapters/orm.py
+index 8499c2d..a36ab74 100644
+--- a/adapters/orm.py
++++ b/adapters/orm.py
+@@ -23,6 +23,7 @@ batches = Table(
+     Column("sku", String(255)),
+     Column("_purchased_quantity", Integer, nullable=False),
+     Column("eta", Date, nullable=True),
++    Column("expires_at", Date, nullable=True),
+ )
+ 
+ allocations = Table(
+@@ -35,6 +36,12 @@ allocations = Table(
+ 
+ 
+ def start_mappers():
++    mapper(model.OrderLine, order_lines, properties={
++        "expires_at": Column("expires_at", Date, nullable=True),
++    }),
++    mapper(model.Batch, batches, properties={
++        "expires_at": Column("expires_at", Date, nullable=True),
++    })
+     lines_mapper = mapper(model.OrderLine, order_lines)
+     mapper(
+         model.Batch,
+diff --git a/domain/model.py b/domain/model.py
+index b320332..3ae57b7 100644
+--- a/domain/model.py
++++ b/domain/model.py
+@@ -8,7 +8,7 @@ class OutOfStock(Exception):
+     pass
+ 
+ 
+-def allocate(line: OrderLine, batches: List[Batch]) -> str:
++def allocate(line: OrderLine, batches: List[Batch], expires_at: Optional[date] = None) -> str:
+     try:
+         batch = next(b for b in sorted(batches) if b.can_allocate(line))
+         batch.allocate(line)
+@@ -19,9 +19,17 @@ def allocate(line: OrderLine, batches: List[Batch]) -> str:
+ 
+ @dataclass(unsafe_hash=True)
+ class OrderLine:
++    expires_at: Optional[datetime.date] = None
++
++    def __init__(self, orderid, sku, qty, expires_at=None):
++        self.orderid = orderid
++        self.sku = sku
++        self.qty = qty
++        self.expires_at = expires_at
+     orderid: str
+     sku: str
+     qty: int
++    expires_at: Optional[date] = None
+ 
+ 
+ class Batch:
+diff --git a/service_layer/services.py b/service_layer/services.py
+index 36c7bd9..7c6450a 100644
+--- a/service_layer/services.py
++++ b/service_layer/services.py
+@@ -25,8 +25,19 @@ def add_batch(
+ 
+ def allocate(
+     orderid: str, sku: str, qty: int,
+-    repo: AbstractRepository, session
++    repo: AbstractRepository, session,
++    expires_at: Optional[date] = None,
++    now: Optional[date] = None
+ ) -> str:
++    if expires_at is not None and (now is None or expires_at <= now):
++        raise ValueError("Invalid expiry date")
++    line = OrderLine(orderid, sku, qty, expires_at=expires_at)
++    batches = repo.list()
++    if not is_valid_sku(line.sku, batches):
++        raise InvalidSku(f"Invalid sku {line.sku}")
++    batchref = model.allocate(line, batches)
++    session.commit()
++    return batchref
+     line = OrderLine(orderid, sku, qty)
+     batches = repo.list()
+     if not is_valid_sku(line.sku, batches):

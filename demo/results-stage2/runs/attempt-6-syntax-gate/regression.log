@@ -1,0 +1,129 @@
+................EEEEEEEE                                                 [100%]
+==================================== ERRORS ====================================
+____________ ERROR at setup of test_orderline_mapper_can_load_lines ____________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:691: in __init__
+    self._configure_properties()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1476: in _configure_properties
+    self._configure_property(key, prop, False)
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1744: in _configure_property
+    prop = self._property_from_column(key, prop)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1917: in _property_from_column
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: When configuring property 'expires_at' on mapped class OrderLine->order_lines, column 'expires_at' is not represented in the mapper's table. Use the `column_property()` function to force this column to be mapped as a read-only attribute.
+____________ ERROR at setup of test_orderline_mapper_can_save_lines ____________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+__________________ ERROR at setup of test_retrieving_batches ___________________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+____________________ ERROR at setup of test_saving_batches _____________________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+__________________ ERROR at setup of test_saving_allocations ___________________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+________________ ERROR at setup of test_retrieving_allocations _________________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+______________ ERROR at setup of test_repository_can_save_a_batch ______________
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+___ ERROR at setup of test_repository_can_retrieve_a_batch_with_allocations ____
+/protected/regression/tests/conftest.py:25: in session
+    start_mappers()
+adapters/orm.py:39: in start_mappers
+    mapper(model.OrderLine, order_lines, properties={
+/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__
+    self._configure_class_instrumentation()
+/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation
+    raise sa_exc.ArgumentError(
+E   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined.
+=============================== warnings summary ===============================
+tests/integration/test_orm.py::test_orderline_mapper_can_load_lines
+  /work/adapters/orm.py:39: RemovedIn20Warning: Deprecated API features detected! These feature(s) are not compatible with SQLAlchemy 2.0. To prevent incompatible upgrades prior to updating applications, ensure requirements files are pinned to "sqlalchemy<2.0". Set environment variable SQLALCHEMY_WARN_20=1 to show all deprecation warnings.  Set environment variable SQLALCHEMY_SILENCE_UBER_WARNING=1 to silence this message. (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    mapper(model.OrderLine, order_lines, properties={
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR ../protected/regression/tests/integration/test_orm.py::test_orderline_mapper_can_load_lines
+ERROR ../protected/regression/tests/integration/test_orm.py::test_orderline_mapper_can_save_lines
+ERROR ../protected/regression/tests/integration/test_orm.py::test_retrieving_batches
+ERROR ../protected/regression/tests/integration/test_orm.py::test_saving_batches
+ERROR ../protected/regression/tests/integration/test_orm.py::test_saving_allocations
+ERROR ../protected/regression/tests/integration/test_orm.py::test_retrieving_allocations
+ERROR ../protected/regression/tests/integration/test_repository.py::test_repository_can_save_a_batch
+ERROR ../protected/regression/tests/integration/test_repository.py::test_repository_can_retrieve_a_batch_with_allocations
+16 passed, 1 warning, 8 errors in 0.18s
+HARNESS_STAGE2_REPORT={"suite": "regression", "exit_code": 1, "tests": 24, "passed": 16, "failed": 0, "errors": 8, "skipped": 0, "cases": [{"name": "test_prefers_current_stock_batches_to_shipments", "result": "passed", "detail": ""}, {"name": "test_prefers_earlier_batches", "result": "passed", "detail": ""}, {"name": "test_returns_allocated_batch_ref", "result": "passed", "detail": ""}, {"name": "test_raises_out_of_stock_exception_if_cannot_allocate", "result": "passed", "detail": ""}, {"name": "test_allocating_to_a_batch_reduces_the_available_quantity", "result": "passed", "detail": ""}, {"name": "test_can_allocate_if_available_greater_than_required", "result": "passed", "detail": ""}, {"name": "test_cannot_allocate_if_available_smaller_than_required", "result": "passed", "detail": ""}, {"name": "test_can_allocate_if_available_equal_to_required", "result": "passed", "detail": ""}, {"name": "test_cannot_allocate_if_skus_do_not_match", "result": "passed", "detail": ""}, {"name": "test_allocation_is_idempotent", "result": "passed", "detail": ""}, {"name": "test_deallocate", "result": "passed", "detail": ""}, {"name": "test_can_only_deallocate_allocated_lines", "result": "passed", "detail": ""}, {"name": "test_add_batch", "result": "passed", "detail": ""}, {"name": "test_allocate_returns_allocation", "result": "passed", "detail": ""}, {"name": "test_allocate_errors_for_invalid_sku", "result": "passed", "detail": ""}, {"name": "test_commits", "result": "passed", "detail": ""}, {"name": "test_orderline_mapper_can_load_lines", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:691: in __init__\n    self._configure_properties()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1476: in _configure_properties\n    self._configure_property(key, prop, False)\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1744: in _configure_property\n    prop = self._property_from_column(key, prop)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1917: in _property_from_column\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: When configuring property 'expires_at' on mapped class OrderLine->order_lines, column 'expires_at' is not represented in the mapper's table. Use the `column_property()` function to force this column to be mapped as a read-only attribute."}, {"name": "test_orderline_mapper_can_save_lines", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_retrieving_batches", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_saving_batches", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_saving_allocations", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_retrieving_allocations", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_repository_can_save_a_batch", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}, {"name": "test_repository_can_retrieve_a_batch_with_allocations", "result": "errors", "detail": "/protected/regression/tests/conftest.py:25: in session\n    start_mappers()\nadapters/orm.py:39: in start_mappers\n    mapper(model.OrderLine, order_lines, properties={\n/usr/local/lib/python3.12/site-packages/sqlalchemy/util/deprecations.py:375: in warned\n    return fn(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:690: in __init__\n    self._configure_class_instrumentation()\n/usr/local/lib/python3.12/site-packages/sqlalchemy/orm/mapper.py:1284: in _configure_class_instrumentation\n    raise sa_exc.ArgumentError(\nE   sqlalchemy.exc.ArgumentError: Class '<class 'domain.model.OrderLine'>' already has a primary mapper defined."}]}
+

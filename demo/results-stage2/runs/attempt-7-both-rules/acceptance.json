@@ -1,0 +1,46 @@
+{
+  "command": [
+    "~/Github/harness/.venv/bin/python",
+    "-I",
+    "/protected/run_checks.py",
+    "acceptance"
+  ],
+  "result": {
+    "name": "protected-acceptance",
+    "command": [
+      "~/Github/harness/.venv/bin/python",
+      "-I",
+      "/protected/run_checks.py",
+      "acceptance"
+    ],
+    "exit_code": 2,
+    "stdout": "\n==================================== ERRORS ====================================\n____________________ ERROR collecting acceptance_expiry.py _____________________\n/protected/acceptance/acceptance_expiry.py:10: in <module>\n    from adapters import orm, repository\nadapters/orm.py:4: in <module>\n    from domain import model\ndomain/model.py:20: in <module>\n    @dataclass(unsafe_hash=True)\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/dataclasses.py:1265: in wrap\n    return _process_class(cls, init, repr, eq, order, unsafe_hash,\n/usr/local/lib/python3.12/dataclasses.py:1063: in _process_class\n    _init_fn(all_init_fields,\n/usr/local/lib/python3.12/dataclasses.py:585: in _init_fn\n    raise TypeError(f'non-default argument {f.name!r} '\nE   TypeError: non-default argument 'orderid' follows default argument\n=========================== short test summary info ============================\nERROR ../protected/acceptance/acceptance_expiry.py - TypeError: non-default a...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.18s\nHARNESS_STAGE2_REPORT={\"suite\": \"acceptance\", \"exit_code\": 2, \"tests\": 1, \"passed\": 0, \"failed\": 0, \"errors\": 1, \"skipped\": 0, \"cases\": [{\"name\": \"acceptance_expiry\", \"result\": \"errors\", \"detail\": \"/protected/acceptance/acceptance_expiry.py:10: in <module>\\n    from adapters import orm, repository\\nadapters/orm.py:4: in <module>\\n    from domain import model\\ndomain/model.py:20: in <module>\\n    @dataclass(unsafe_hash=True)\\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^\\n/usr/local/lib/python3.12/dataclasses.py:1265: in wrap\\n    return _process_class(cls, init, repr, eq, order, unsafe_hash,\\n/usr/local/lib/python3.12/dataclasses.py:1063: in _process_class\\n    _init_fn(all_init_fields,\\n/usr/local/lib/python3.12/dataclasses.py:585: in _init_fn\\n    raise TypeError(f'non-default argument {f.name!r} '\\nE   TypeError: non-default argument 'orderid' follows default argument\"}]}\n",
+    "stderr": "",
+    "timed_out": false,
+    "duration_seconds": 0.6248049999994691,
+    "no_tests_ran": false,
+    "sandbox": "docker (image harness-sandbox, no network, read-only repository)",
+    "cancelled": false,
+    "unavailable": false,
+    "skipped_tests": 0,
+    "tests_run": null
+  },
+  "report": {
+    "suite": "acceptance",
+    "exit_code": 2,
+    "tests": 1,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "acceptance_expiry",
+        "result": "errors",
+        "detail": "/protected/acceptance/acceptance_expiry.py:10: in <module>\n    from adapters import orm, repository\nadapters/orm.py:4: in <module>\n    from domain import model\ndomain/model.py:20: in <module>\n    @dataclass(unsafe_hash=True)\n     ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/dataclasses.py:1265: in wrap\n    return _process_class(cls, init, repr, eq, order, unsafe_hash,\n/usr/local/lib/python3.12/dataclasses.py:1063: in _process_class\n    _init_fn(all_init_fields,\n/usr/local/lib/python3.12/dataclasses.py:585: in _init_fn\n    raise TypeError(f'non-default argument {f.name!r} '\nE   TypeError: non-default argument 'orderid' follows default argument"
+      }
+    ]
+  },
+  "counts_valid": false,
+  "passed": false
+}

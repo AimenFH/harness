@@ -1,0 +1,41 @@
+{
+  "command": [
+    "~/Github/harness/.venv/bin/python",
+    "-I",
+    "/protected/run_checks.py",
+    "regression"
+  ],
+  "result": {
+    "name": "protected-regression",
+    "command": [
+      "~/Github/harness/.venv/bin/python",
+      "-I",
+      "/protected/run_checks.py",
+      "regression"
+    ],
+    "exit_code": 4,
+    "stdout": "HARNESS_STAGE2_REPORT={\"suite\": \"regression\", \"exit_code\": 4, \"tests\": 0, \"passed\": 0, \"failed\": 0, \"errors\": 1, \"skipped\": 0, \"cases\": [], \"missing_junit\": true}\n",
+    "stderr": "ImportError while loading conftest '/protected/regression/tests/conftest.py'.\n/protected/regression/tests/conftest.py:12: in <module>\n    from adapters.orm import metadata, start_mappers\nE     File \"/work/adapters/orm.py\", line 43\nE       })\nE        ^\nE   SyntaxError: unmatched ')'\n",
+    "timed_out": false,
+    "duration_seconds": 0.4711529999913182,
+    "no_tests_ran": false,
+    "sandbox": "docker (image harness-sandbox, no network, read-only repository)",
+    "cancelled": false,
+    "unavailable": false,
+    "skipped_tests": 0,
+    "tests_run": null
+  },
+  "report": {
+    "suite": "regression",
+    "exit_code": 4,
+    "tests": 0,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "skipped": 0,
+    "cases": [],
+    "missing_junit": true
+  },
+  "counts_valid": false,
+  "passed": false
+}

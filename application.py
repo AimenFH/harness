@@ -243,6 +243,16 @@ def _execute(config, tools, navigator, session, store, sandbox, model_factory, l
     return outcome
 
 
+def live_diff(root):
+    """Inspect the current working copy of `root`. Runs no checks and no tests.
+
+    Used by `show --live-diff` to report what is in the repository now, as
+    opposed to what the session recorded. `check_names=()` means the Verifier
+    only inspects Git, so nothing is executed in the repository.
+    """
+    return Verifier(validate_root(root), check_names=()).verify()
+
+
 def cancel_task(session_id, session_dir, reason):
     saved = SessionStore(session_dir).load(session_id)
     if not saved.finished:

@@ -1,0 +1,23 @@
+# Settings for the Stage 2 feature run with a real model.
+# The model runs locally in Ollama: no account, no API key, no secrets here.
+
+model_timeout_seconds = 600   # headroom for a reasoning model's hidden thinking
+num_ctx = 16384               # context window asked of Ollama
+
+max_actions = 60
+max_retries = 3
+max_output_chars = 10000
+# max_reply_tokens counts GENERATED tokens. qwen3 is a reasoning model, so most
+# of them are hidden thinking (a 48-character reply cost 340 tokens), and the
+# shipped default of 1200 would cut off legitimate edits. 3000 tokens is still a
+# hard bound: about 170 s at the ~18 tokens/s this machine gets.
+max_reply_tokens = 3000
+
+# Context management (context.py). The budget is the documented size limit for
+# the whole conversation sent to the model; the full history stays in the session.
+context_budget_chars = 24000
+context_keep_turns = 3
+context_map = true
+
+sandbox = "docker"
+sandbox_image = "harness-sandbox"
