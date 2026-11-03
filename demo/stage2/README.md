@@ -107,7 +107,7 @@ phase. The real-model run that followed it is in
 
 ## Letting the harness implement it
 
-This has since been run with a real local model. The result — five runs, the
+This has since been run with a real local model. The result — seven runs, the
 three harness defects the live runs exposed, and the protected checks' verdict
 on the best one — is in
 [../results-stage2/RESULTS.md](../results-stage2/RESULTS.md). The feature

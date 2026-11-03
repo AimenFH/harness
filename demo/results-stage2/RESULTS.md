@@ -68,7 +68,7 @@ missing` — and the one pass is the legacy control, which proves the environmen
 works and the failures are feature absence. Evidence:
 [`demo/stage2/baseline/`](../stage2/baseline/).
 
-## Step 3 — five runs, and what each one found
+## Step 3 — seven runs, and what each one found
 
 The runs are kept in full under `~/harness-demo/stage2-run/attempt-*`. They are
 listed here because the first three failures were **harness defects that only a
@@ -231,7 +231,7 @@ Every one of these is from the live runs above, not from the test suite:
 | Failed checks guide fixes | action 13 `FAILED (exit code 1)` → the model edits → action 15 `FAILED (no tests were run, exit code 4)` → it re-reads and edits again |
 | Contained execution | every check `sandbox=docker (image harness-sandbox, no network, read-only repository)` |
 | Repository text kept untrusted | every tool result arrives inside `----- BEGIN UNTRUSTED REPOSITORY DATA: <tool> -----` markers |
-| Bounded retries, clear stopping rule | all five runs stopped on a named rule with a reason in words — never a hang, never a silent failure |
+| Bounded retries, clear stopping rule | all seven runs stopped on a named rule with a reason in words — never a hang, never a silent failure |
 | A futile repeat is refused | run 7 action 17: `you have already made this exact change and it is in the file` — one application instead of run 6's 23, and the run stopped at 31 of 60 actions instead of exhausting them |
 | A write may not break a file | run 6: `Refused: this change would leave 'adapters/orm.py' with invalid Python (line 43: unmatched ')'). The file was NOT changed.` — and the file stayed parsable for the remaining 44 actions |
 | Nothing passes that did not pass | final status `unfinished`, `Verification: FAIL`, and the saved acceptance commands reported as unfinished work rather than assumed |

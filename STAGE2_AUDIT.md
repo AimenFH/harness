@@ -3,7 +3,8 @@
 | | |
 |---|---|
 | Audited commit | `fbebfad6107f4fdf2448f2243a6d7e70f14838f4` ("test fix") |
-| Working tree at audit start | **clean** (this file makes it dirty — commit or stash it before submitting) |
+| Working tree at audit start | **clean**; the audit and its fixes were committed in `667c504` (merged as `76235fa`) |
+| Re-checked | 2026-11-03 at `76235fa`: **503 passed, 0 skipped**; baseline re-run in Docker (22 × `MISSING FEATURE`, regression 24/24); feature acceptance still **FAIL** |
 | Date | 2026-11-03 |
 | Test suite (offline, blank `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`, no Ollama) | at audit time **498 passed**; after the fixes **503 passed, 0 failed, 0 skipped** in 53s |
 | Same suite with Docker unreachable | **73 failed, 428 passed, 2 skipped** — 75 tests need a live Docker daemon + the `harness-sandbox` image |
@@ -250,6 +251,6 @@ Based only on what demonstrably works today.
 | 2:10–2:40 | From a second terminal: `main.py cancel <id>`. Show the run stopping, then `main.py status <id>`. | D3, D8, F3 |
 | 2:40–3:10 | `main.py resume <id> --dry-run`; then change a file by hand and resume again to show **PAUSED** with the named mismatch. This is the strongest single thing in the project. | D4, D6, H5 |
 | 3:10–3:35 | `main.py show <id>` — Checks, Diff, Unfinished work, with `sandbox=docker (no network, read-only repository)` visible on a check. | E1–E5, G2, D7 |
-| 3:35–4:00 | `python -m pytest -q` → 498 passed. Then **state plainly that the feature does not pass the acceptance check, that the cause is local-model capability, and exactly what manual help was given** (task text and checks hand-written up front; three harness defects diagnosed and fixed by hand between runs; no feature code written by hand; `max_reply_tokens` raised for the qwen3 run). | J5, J6 |
+| 3:35–4:00 | `python -m pytest -q` → 503 passed. Then **state plainly that the feature does not pass the acceptance check, that the cause is local-model capability, and exactly what manual help was given** (task text and checks hand-written up front; three harness defects diagnosed and fixed by hand between runs; no feature code written by hand; `max_reply_tokens` raised for the qwen3 run). | J5, J6 |
 
 **Say the manual help out loud in the video, not just on screen.** Your RESULTS.md disclosure is honest and detailed — repeating it in the video converts a weakness into evidence of rigour. The same goes for the feature not landing: naming it yourself, with the seven-run analysis of *why*, is worth more than letting the grader find it.
