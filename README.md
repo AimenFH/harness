@@ -13,10 +13,13 @@ model runs exposed, is in [docs/stage2-progress.md](docs/stage2-progress.md).
 The harness follows a modular design to ensure a clear separation of concerns:
 
 ```text
-main.py ──> cli.py ──> application.py ──> Controller <──> ContextManager ──> ModelClient
-                            │                │                                  │
-                            │                ├── RepositoryTools / Navigator    ▼
-                            │                │     (read, search, symbols,    Ollama
+main.py ──> cli.py ──> application.py ──> Controller ──> ModelClient ──> Ollama
+                            │                │
+                            │                ├── ContextManager
+                            │                │     (builds every request inside the
+                            │                │      budget; never calls the model)
+                            │                ├── RepositoryTools / Navigator
+                            │                │     (read, search, symbols,
                             │                │      dependencies, Git state)
                             │                └── ExecutionEnvironment ──> Docker
                             │
@@ -71,8 +74,13 @@ The full history is always saved with the session: the budget limits what is
  ├──> Ask model for one action (JSON) ──── "done" ───> Final checks in sandbox
  │           │                                         + changed files + diff
  │           ▼                                                 │
- │   Validate: known tool? valid arguments?                    ▼
- │   path inside --root? allowed in this mode?           User reviews result
+ │   Checkpoint, naming the action about to run                ▼
+ │   (saved as "pending" BEFORE anything runs)           User reviews result
+ │           │
+ │           ▼
+ │   Validate: known tool? valid arguments?
+ │   path inside --root? allowed in this mode?
+ │   inside the task's allowed changes?
  │           │                  │
  │         allowed           refused
  │           ▼                  ▼
@@ -80,10 +88,19 @@ The full history is always saved with the session: the budget limits what is
  │   (checks run in the     (counted)
  │      sandbox)                │
  │           │                  │
+ │           ▼                  │
+ │   Checkpoint, pending cleared│
+ │           │                  │
  └── result back to the model ◄─┘
 
- Stops on: done · action limit · too many refused/malformed replies in a row · model error
+ Stops on: done · action limit · too many refused/malformed replies in a row ·
+ a repeated futile action · model error · cancellation
 ```
+
+The pre-action checkpoint is the reason an interrupted action can be detected at
+all: if the process dies before the second one is written, the reopened session
+still has the action marked `pending`, so it is reported as **uncertain** and
+never replayed (see [Checkpoints and safe resume](#checkpoints-and-safe-resume)).
 
 ### Module Responsibilities
 | Module | Responsibility | Key Features |
@@ -463,14 +480,29 @@ The harness stops with a clear error before contacting the model if Docker is no
 ## 🧪 Validation & Testing
 
 ### Automated Test Suite
-The project includes a comprehensive test suite in `tests/` that uses a `ScriptedModelClient` to ensure deterministic results.
+The project includes a comprehensive test suite in `tests/` that uses a `ScriptedModelClient` to ensure deterministic results. One command runs everything, Stage 1 and Stage 2 together:
 ```bash
 python -m pytest -q
 ```
-A full detailed log of the passing unit tests is provided in [tests/test_results.txt](tests/test_results.txt).
-Build `harness-sandbox` and run Docker for integration tests that execute target code.
-No tests need Ollama, an account or API key. Parser, safety and scripted-model unit
-tests remain independent of a live model; repository checks run inside Docker.
+**498 tests pass.** A full log is committed in [tests/test_results.txt](tests/test_results.txt).
+
+**No test needs Ollama, an account or an API key.** Every model in the suite is a
+`ScriptedModelClient` or a stubbed HTTP call, so the whole suite runs with the
+model provider switched off.
+
+**Docker is a prerequisite, not an optional extra.** 74 of the 498 tests execute
+target-repository code and therefore need a running Docker daemon and the
+`harness-sandbox` image. Two of them skip with a clear reason when it is missing;
+the other **72 fail rather than skip**, because the harness deliberately has no
+host-execution fallback (see **Security & Containment** above). Before running
+the suite:
+
+```bash
+docker build -t harness-sandbox -f sandbox/Dockerfile .
+```
+
+The remaining 424 tests — parsing, path safety, limits, context management,
+sessions, resume validation and the CLI — need neither Docker nor a model.
 
 **Coverage includes**:
 - ✅ **Tool Safety**: Verification that paths outside `--root` are rejected, and that a write cannot leave a Python file unparsable (while an already-broken file can still be repaired).
@@ -511,6 +543,63 @@ and the real-model run — invocation, progress, final diff, and the acceptance,
 regression and scope results — in
 [demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
 
+> **Outcome, stated plainly: the harness worked; the Stage 2 feature did not
+> land.** Seven runs with local models (`qwen2.5-coder:7b`, `qwen3:8b`) exercised
+> every harness behaviour the brief asks for, and three real harness defects were
+> found and fixed because of them. But **the protected acceptance check does not
+> pass**: across all seven runs the models added the new signatures and never
+> reached the behaviour (`Batch.release_expired`, `services.release_expired`,
+> `services.InvalidExpiry`). The cause is model capability on a 7–8B local model,
+> not harness behaviour — and no feature code was written by hand to cover for it.
+> The full analysis, run by run, is in
+> [demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
+
+### Manual help during the real-model run
+
+Stated here so it is visible without opening the results file. The complete
+version is the "Manual help, stated for the record" section of
+[demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
+
+- The task text, the 23 acceptance cases and the 24-test regression gate were
+  **written by hand before any run** and are hash-pinned in
+  `demo/stage2/CHECKS.sha256.json`. The agent can neither read nor change them.
+- Three harness defects exposed by runs 1–3 (no reply-token cap; a cut-off reply
+  echoed back in full; no progress note telling the model what it had already
+  changed) were **diagnosed and fixed by hand between runs**. One diagnosis
+  replayed run 1's saved conversation against Ollama to confirm the cause.
+- **No feature code was written, corrected or completed by hand**, and no
+  reference patch was applied. The target was reset between runs with
+  `git checkout -- .` and nothing else.
+- Run 4's diff was re-applied to a clean copy of the starting commit so the
+  protected checks could judge it. Applying a saved diff changes no code.
+- `max_reply_tokens` was raised from the shipped default of 1200 to 3000 for the
+  `qwen3:8b` run, because a reasoning model's hidden thinking counts towards that
+  limit. This was a deliberate, documented change.
+
+### Known limits
+
+- **The Stage 2 feature is not implemented** and its acceptance check does not
+  pass. See the note above.
+- **Local-model capability is the binding constraint.** A 7B coder model could
+  not write this feature correctly; an 8B reasoning model could not keep to the
+  one-action-per-reply format at all. The harness fixes stopped exposing harness
+  problems and started exposing model ones.
+- **Runner locks are POSIX-only** (`fcntl`, macOS/Linux), so two concurrent CLI
+  workers are prevented from resuming the same session only on those platforms.
+- **Repository checks require Docker.** There is deliberately no host-execution
+  fallback: with `--sandbox none` configured checks are reported as *unavailable*
+  and the task cannot succeed.
+- **Resume hashes only the files the harness itself wrote.** Other changes are
+  caught through `git status`, not a content digest of every untouched file.
+- **Scope patterns use `fnmatch`,** where `*` also matches `/` — so `src/*.py`
+  also allows `src/a/b.py`. Name exact files when a task must be tight.
+- **A disposable target copy is a convention, not an enforced check.** The demo
+  helpers create the copy and remove its Git remote; the harness itself only
+  refuses a root that is `/`, `$HOME`, or a folder containing the harness.
+- **The run artefacts for the Stage 2 feature runs live outside this repository**
+  (`~/harness-demo/stage2-run/attempt-*`), so the narrative in
+  `demo/results-stage2/RESULTS.md` cannot be re-verified from a fresh clone alone.
+
 ---
 
 ## 📋 Submission Checklist Mapping
@@ -536,3 +625,70 @@ regression and scope results — in
 | **Verification** — changed files, final diff, test and lint results, unfinished work, failed/unavailable checks visible | [`verification.py`](verification.py) and [Independent verification and reporting](#independent-verification-and-reporting) |
 | **CLI** — select an allowed project, start, inspect, cancel, resume, review; interface separate from core | [`cli.py`](cli.py) / [`application.py`](application.py) |
 | **Feature across modules** with a protected acceptance check | [`demo/stage2/`](demo/stage2/), run in [`demo/results-stage2/RESULTS.md`](demo/results-stage2/RESULTS.md) |
+
+---
+
+## 📚 Credits
+
+### Reused code
+
+**[cosmicpython/code](https://github.com/cosmicpython/code)** — the example
+repository from *Architecture Patterns with Python* by Harry Percival and Bob
+Gregory. It is the **target repository** for both demos, used at branch
+`chapter_05_high_gear_low_gear`, commit
+`97267473c8accfd998bb9f756034eac48fa154f6`. Two uses, both unmodified:
+
+- The harness operates on a **disposable clone** of it (`demo/demo.py prepare`,
+  `demo/stage2.py prepare`). Nothing from it is committed here.
+- Seven of its test files are **vendored verbatim** under
+  [`demo/stage2/regression/tests/`](demo/stage2/regression/) to serve as the
+  Stage 2 regression gate (24 tests). They are byte-for-byte the upstream files:
+  [`SOURCE.json`](demo/stage2/regression/SOURCE.json) records the upstream
+  repository, the exact commit and a SHA-256 per file, and
+  `demo/stage2.py prepare` re-verifies every one against the starting commit
+  before a run. Licence notice as shipped upstream:
+  [`LICENSE.cosmicpython`](demo/stage2/regression/LICENSE.cosmicpython)
+  (Creative Commons CC-BY-ND). They are included for attributed verification
+  only and are not modified or redistributed as derivative work.
+
+Everything else in this repository — the harness itself (`controller.py`,
+`context.py`, `session.py`, `navigation.py`, `execution.py`, `verification.py`,
+`model_client.py`, `repository_tools.py`, `cancellation.py`, `task_record.py`,
+`cli.py`, `application.py`, `config.py`, `projects.py`), the test suite, the
+sandbox image, the Stage 1 and Stage 2 task texts and **all** acceptance checks —
+was written for this project. No existing coding harness (aider, OpenHands,
+SWE-agent, Codex, Claude Code or similar) was used as a starting point, and none
+appears in [`requirements.txt`](requirements.txt), whose only entries are
+`requests` and `pytest`.
+
+### Third-party dependencies
+
+| Package | Used for |
+| :--- | :--- |
+| [`requests`](https://pypi.org/project/requests/) | the HTTP call to the local Ollama API (`model_client.py`) |
+| [`pytest`](https://pypi.org/project/pytest/) | the test runner, and one of the whitelisted checks |
+| [Ollama](https://ollama.com) | runs the language model locally; no account, no API key |
+| [Ruff](https://docs.astral.sh/ruff/) | the optional `--lint` check, inside the sandbox |
+| Docker / [`python:3.12-slim`](https://hub.docker.com/_/python) | the contained execution environment ([`sandbox/Dockerfile`](sandbox/Dockerfile)) |
+
+### AI assistance
+
+This project was built with AI assistance, and the history records it: **7 of the
+40 commits on `main` are authored by `Claude <noreply@anthropic.com>`**
+(`git log --author=Claude`), and several others were merged from `claude/*`
+branches. Anthropic's Claude (via Claude Code) was used for:
+
+- drafting and reviewing implementation code across the harness, most visibly the
+  Stage 2 baseline and requirement checklist (`610dd87`), the repository
+  navigation tools (`20bbf78`), the Docker sandbox and example settings
+  (`8114a3d`), and parts of this README;
+- writing and extending the test suite;
+- reviewing the delivery against the Stage 2 brief
+  ([`STAGE2_AUDIT.md`](STAGE2_AUDIT.md)).
+
+Written without AI assistance: the task texts and **all** acceptance and
+regression checks for both demos (hand-written before any run, then hash-pinned),
+every real-model run and its analysis, and the diagnosis of the three harness
+defects those runs exposed. See
+[Manual help during the real-model run](#manual-help-during-the-real-model-run)
+for exactly what was done by hand during the Stage 2 feature run.

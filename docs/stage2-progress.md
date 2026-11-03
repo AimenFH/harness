@@ -148,7 +148,7 @@ Status today: ✅ done in Stage 1 · 🟡 partly · ❌ missing.
 | TR | Safe resume against saved working-copy state (incl. harness edits); recheck permissions and limits; pause on mismatch or uncertain action | ❌ |
 | TL | Failed-check handling with scripted replies; failed/unavailable checks never appear as passed | ✅ partly (extend for the loop) |
 | T1 | Stage 1 tool, error, action-limit, output-limit, bug-fix tests still pass | ✅ 152 passing |
-| TF | Feature checks fail on starting code, pass after the change; existing callers + regression still work | ✅ `demo/stage2/` baseline proof + real-model run (Phases 9-10) |
+| TF | Feature checks fail on starting code, pass after the change; existing callers + regression still work | 🟡 **half done.** "Fails on the starting code" is proven for the expected reason (`demo/stage2/baseline/`: 22 of 23 cases fail with `MISSING FEATURE`, the legacy control passes, regression 24/24 green). "**Passes after the change**" is **not** achieved: no run gets the acceptance suite to green and no reference implementation is committed (Phases 9-10) |
 
 ### Delivery 2 checklist
 
