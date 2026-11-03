@@ -1,0 +1,25 @@
+
+==================================== ERRORS ====================================
+____________________ ERROR collecting acceptance_expiry.py _____________________
+/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule
+    mod = import_path(
+/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path
+    mod = _import_module_using_spec(module_name, path, insert_modules=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module
+    exec(co, module.__dict__)
+/protected/acceptance/acceptance_expiry.py:10: in <module>
+    from adapters import orm, repository
+E     File "/work/adapters/orm.py", line 43
+E       })
+E        ^
+E   SyntaxError: unmatched ')'
+=========================== short test summary info ============================
+ERROR ../protected/acceptance/acceptance_expiry.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.34s
+HARNESS_STAGE2_REPORT={"suite": "acceptance", "exit_code": 2, "tests": 1, "passed": 0, "failed": 0, "errors": 1, "skipped": 0, "cases": [{"name": "acceptance_expiry", "result": "errors", "detail": "/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule\n    mod = import_path(\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path\n    mod = _import_module_using_spec(module_name, path, insert_modules=True)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec\n    spec.loader.exec_module(mod)  # type: ignore[union-attr]\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module\n    exec(co, module.__dict__)\n/protected/acceptance/acceptance_expiry.py:10: in <module>\n    from adapters import orm, repository\nE     File \"/work/adapters/orm.py\", line 43\nE       })\nE        ^\nE   SyntaxError: unmatched ')'"}]}
+

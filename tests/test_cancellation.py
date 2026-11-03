@@ -330,14 +330,16 @@ def test_no_file_is_edited_after_cancellation(repo):
                                                   "new": "OWNED"}},
     ], cancel=token, allowed_changes=("hello.py",))
 
-    original = h.controller.execute
+    # run_tool is what carries an allowed action out, so cancelling from here
+    # is a cancellation that arrives once an action has just been completed.
+    original = h.controller.run_tool
 
-    def execute_then_cancel(action):
+    def run_then_cancel(action):
         outcome = original(action)
         token.cancel("cancelled by the user")
         return outcome
 
-    h.controller.execute = execute_then_cancel
+    h.controller.run_tool = run_then_cancel
     result = h.controller.run("Read, then get cancelled before editing")
 
     assert result.status == CANCELLED
@@ -376,14 +378,14 @@ def test_the_cancelled_state_is_saved(repo, tmp_path):
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": "OWNED = 1\n"}},
     ], cancel=token, session=session, store=store, allowed_changes=("hello.py",))
 
-    original = h.controller.execute
+    original = h.controller.run_tool
 
-    def execute_then_cancel(action):
+    def run_then_cancel(action):
         outcome = original(action)
         token.cancel("cancelled from another terminal")
         return outcome
 
-    h.controller.execute = execute_then_cancel
+    h.controller.run_tool = run_then_cancel
     h.controller.run(spec.request)
 
     # A completely fresh store, as a new process would have.

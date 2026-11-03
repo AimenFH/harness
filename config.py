@@ -146,8 +146,30 @@ class Config:
             f"Session: {self.session_dir or '(not saved)'}",
             f"Sandbox: {self.sandbox_text()}",
             f"Context: {self.context_text()}",
+            f"Approval: {self.approval_text()}",
         ]
         return "\n".join(lines)
+
+    def approval_text(self):
+        """Where permission to work on this repository comes from.
+
+        The Stage 2 `start` command only ever runs on a named, explicitly
+        approved project. The Stage 1 launch form (`--root`) predates that and
+        still accepts any directory passing the safety checks, so when nothing
+        approved this root it says so instead of looking protected.
+        """
+        if self.projects_file:
+            return f"approved project list ({self.projects_file})"
+        if self.allowed_projects:
+            return f"{len(self.allowed_projects)} project(s) approved on the command line"
+        return ("NONE - no allow-list applied to this run. The Stage 1 launch form "
+                "accepts any --root that passes the safety checks; use the 'start' "
+                "command for an explicitly approved project.")
+
+    @property
+    def approved(self):
+        """Whether an allow-list was applied to this run at all."""
+        return bool(self.projects_file or self.allowed_projects)
 
     def context_text(self):
         """How the conversation sent to the model is bounded (see context.py)."""

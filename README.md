@@ -126,7 +126,17 @@ never replayed (see [Checkpoints and safe resume](#checkpoints-and-safe-resume))
 
 To prevent the LLM from performing destructive actions or accessing sensitive data, this harness implements multiple layers of protection:
 
-1.  **Disposable Copies**: The harness does not operate on the original source code. It utilizes a disposable copy of the target repository (via `demo/demo.py prepare`), ensuring the original codebase remains untouched.
+1.  **Disposable Copies, enforced**: The harness does not operate on the original source code. It works on a disposable copy of the target repository (via `demo/demo.py prepare`), so the original codebase stays untouched. This is **checked, not just documented**: an approved project that still has a Git remote is refused, because a throwaway copy made for the harness has had its remote removed, while someone's real working repository has not:
+
+    ```text
+    error: approved project /path/to/repo still has Git remote(s): origin. An approved
+    project must be a disposable copy, because the agent edits it in place. Approve a
+    disposable copy instead:
+        git clone --no-hardlinks <repository> <copy>
+        git -C <copy> remote remove origin
+    ```
+
+    The check (`projects.require_disposable`) runs when the project configuration is read, so it applies to `projects`, `start` and `resume` alike. It protects *your* work rather than the remote — pushing is impossible either way, since Git is only ever run as a fixed set of read-only commands and there is no Git write command at all.
 2.  **Path Sandboxing**: Every tool in `repository_tools.py` enforces a strict root-directory boundary. Any attempt by the model to access files outside the `--root` folder (e.g., using `../` to reach SSH keys or system files) is intercepted and rejected with an `Access Denied` error.
 3.  **Contained Execution**: The `ExecutionEnvironment` does not provide a general shell. It runs fixed test, lint and build commands inside a throwaway **Docker container** (`--sandbox docker`):
     *   only the repository copy is visible, mounted **read-only** at `/work` — no home folder, no SSH keys, no other host files;
@@ -443,12 +453,28 @@ shown by `show` after restart. `status` also displays the final assessment.
 
 The original launch form still works, including the demo and existing Python
 imports. Direct `--root` selection applies the default project configuration when
-present, or an explicit `--projects-file`. Without a configuration it retains
-Stage 1 behavior; use `start --project` to require approval on every launch. Legacy runs
+present, or an explicit `--projects-file`. Legacy runs
 are saved only when `--session-dir` is supplied. Existing `--list-sessions`,
 `--cancel ID` and `--resume ID` forms remain available with `--session-dir`.
 Tasks started with approvals still require current approval when resumed through
 the legacy flag form.
+
+**This form has no allow-list, and says so.** With no project configuration and
+no `--allowed-project`, `--root` accepts any directory that passes the safety
+checks — that is deliberate Stage 1 behaviour, but it must never *look* like an
+approved run. So the harness prints a warning on stderr and the run's own `Task`
+section records where its permission came from:
+
+```text
+Approval: NONE - no allow-list applied to this run. The Stage 1 launch form
+accepts any --root that passes the safety checks; use the 'start' command for
+an explicitly approved project.
+```
+
+An approved run shows `Approval: approved project list (…/projects.toml)`
+instead. **`start --project NAME` is the path that enforces an allow-list**, and
+the one to use for anything that matters; the session also records which of the
+two it was, so a task started under approval cannot later be resumed without it.
 
 ```bash
 python main.py \
@@ -484,16 +510,16 @@ The project includes a comprehensive test suite in `tests/` that uses a `Scripte
 ```bash
 python -m pytest -q
 ```
-**498 tests pass.** A full log is committed in [tests/test_results.txt](tests/test_results.txt).
+**503 tests pass.** A full log is committed in [tests/test_results.txt](tests/test_results.txt).
 
 **No test needs Ollama, an account or an API key.** Every model in the suite is a
 `ScriptedModelClient` or a stubbed HTTP call, so the whole suite runs with the
 model provider switched off.
 
-**Docker is a prerequisite, not an optional extra.** 74 of the 498 tests execute
+**Docker is a prerequisite, not an optional extra.** 75 of the 503 tests execute
 target-repository code and therefore need a running Docker daemon and the
 `harness-sandbox` image. Two of them skip with a clear reason when it is missing;
-the other **72 fail rather than skip**, because the harness deliberately has no
+the other **73 fail rather than skip**, because the harness deliberately has no
 host-execution fallback (see **Security & Containment** above). Before running
 the suite:
 
@@ -501,7 +527,7 @@ the suite:
 docker build -t harness-sandbox -f sandbox/Dockerfile .
 ```
 
-The remaining 424 tests — parsing, path safety, limits, context management,
+The remaining 428 tests — parsing, path safety, limits, context management,
 sessions, resume validation and the CLI — need neither Docker nor a model.
 
 **Coverage includes**:
@@ -542,6 +568,18 @@ The recorded baseline proof is in [demo/stage2/baseline/](demo/stage2/baseline/)
 and the real-model run — invocation, progress, final diff, and the acceptance,
 regression and scope results — in
 [demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
+
+**The raw artefacts of all seven runs are committed** under
+[demo/results-stage2/runs/](demo/results-stage2/runs/): per run the full harness
+log, the task record with every action and outcome, the saved session, the
+resulting diff, and the protected acceptance/regression/scope results. Only the
+absolute home directory was redacted to `~`. A saved session still opens from a
+fresh clone, which is requirement D1 in practice:
+
+```bash
+.venv/bin/python main.py show 20261101-012730-0bc82ccf \
+  --session-dir demo/results-stage2/runs/attempt-4-qwen2.5-coder/sessions
+```
 
 > **Outcome, stated plainly: the harness worked; the Stage 2 feature did not
 > land.** Seven runs with local models (`qwen2.5-coder:7b`, `qwen3:8b`) exercised
@@ -593,12 +631,15 @@ version is the "Manual help, stated for the record" section of
   caught through `git status`, not a content digest of every untouched file.
 - **Scope patterns use `fnmatch`,** where `*` also matches `/` — so `src/*.py`
   also allows `src/a/b.py`. Name exact files when a task must be tight.
-- **A disposable target copy is a convention, not an enforced check.** The demo
-  helpers create the copy and remove its Git remote; the harness itself only
-  refuses a root that is `/`, `$HOME`, or a folder containing the harness.
-- **The run artefacts for the Stage 2 feature runs live outside this repository**
-  (`~/harness-demo/stage2-run/attempt-*`), so the narrative in
-  `demo/results-stage2/RESULTS.md` cannot be re-verified from a fresh clone alone.
+- **Disposability is enforced by proxy, not proof.** An approved project with a
+  Git remote is refused, which catches the realistic mistake of approving your
+  own working clone. A repository that never had a remote — or a copy you care
+  about — still passes; the harness cannot tell a throwaway apart from the
+  original by inspection alone. The Stage 1 `--root` form is warned, not blocked.
+- **The Stage 1 `--root` launch form has no allow-list.** It reports that on
+  every run (`Approval: NONE …`) and warns on stderr, but it does not refuse.
+  `start --project` is the enforced path. See
+  [Stage 1 compatibility](#stage-1-compatibility).
 
 ---
 

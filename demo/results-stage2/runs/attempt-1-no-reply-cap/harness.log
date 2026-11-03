@@ -1,0 +1,191 @@
+
+=== Task ===
+Task:    Add optional expiry to stock reservations in Cosmic Python at starting commit
+97267473c8accfd998bb9f756034eac48fa154f6. Inspect the modules before editing.
+
+Compatibility and API contract:
+- Preserve existing services.allocate(orderid, sku, qty, repo, session) calls,
+  return values, SKU/stock errors, and legacy OrderLine(orderid, sku, qty) calls.
+- Add an optional expires_at=None to OrderLine and services.allocate. Add an
+  optional keyword now=None to services.allocate; None uses date.today(), while
+  a supplied date is the sole reference clock. Ordinary reservations never expire.
+- Use datetime.date values, not datetime.datetime timestamps, strings, booleans,
+  or numbers. A provided expiry must be strictly later than the reference now.
+  Raise services.InvalidExpiry with a clear expiry/now-related message for invalid
+  expiry or clock values, before allocation or session.commit mutates anything.
+- Batch.release_expired(now) removes reservations with expires_at <= now and
+  returns the number of reservations released (not their quantity).
+- services.release_expired(now, repo, session) releases expired reservations
+  across repo.list(), commits once, and returns the total reservation count.
+  The explicit now argument must be a date. Nothing reads the wall clock here.
+- Future and permanent reservations remain allocated. Released stock can be
+  reserved again. Repeating a release returns zero for previously released
+  reservations and must never inflate available stock or remove a new reservation.
+- Repeating an identical allocation keeps the existing idempotent behavior.
+- Persist optional expiry through the existing SQLAlchemy mapping; a new database
+  has a nullable date column for expiry, and legacy rows/calls without expiry work.
+  Reloaded reservations can be released, and release remains effective after reload.
+  Migrating an already-existing production database is outside this demonstration.
+
+Scope: change only domain/model.py, service_layer/services.py and adapters/orm.py.
+Keep tests, dependencies, entrypoints, configuration and Git metadata unchanged.
+The implementation must change at least two of those interacting modules. Do not
+copy acceptance tests into the target or replace them. No push, merge or deployment.
+Protected acceptance and original regression tests are outside the writable copy.
+Use the existing contained execution/check tools; test failures must remain visible.
+Root:    ~/harness-demo/stage2-run/cosmic
+Mode:    edit
+Model:   qwen2.5-coder:7b
+Offline: no
+Files:   (none selected)
+Allowed: domain/model.py, service_layer/services.py, adapters/orm.py
+Session: ~/harness-demo/stage2-run/sessions
+Sandbox: docker (image harness-sandbox)
+Context: budget 24000 characters, last 3 turns verbatim, repository map on
+
+=== Task Record ===
+Request:     Add optional expiry to stock reservations in Cosmic Python at starting commit
+97267473c8accfd998bb9f756034eac48fa154f6. Inspect the modules before editing.
+
+Compatibility and API contract:
+- Preserve existing services.allocate(orderid, sku, qty, repo, session) calls,
+  return values, SKU/stock errors, and legacy OrderLine(orderid, sku, qty) calls.
+- Add an optional expires_at=None to OrderLine and services.allocate. Add an
+  optional keyword now=None to services.allocate; None uses date.today(), while
+  a supplied date is the sole reference clock. Ordinary reservations never expire.
+- Use datetime.date values, not datetime.datetime timestamps, strings, booleans,
+  or numbers. A provided expiry must be strictly later than the reference now.
+  Raise services.InvalidExpiry with a clear expiry/now-related message for invalid
+  expiry or clock values, before allocation or session.commit mutates anything.
+- Batch.release_expired(now) removes reservations with expires_at <= now and
+  returns the number of reservations released (not their quantity).
+- services.release_expired(now, repo, session) releases expired reservations
+  across repo.list(), commits once, and returns the total reservation count.
+  The explicit now argument must be a date. Nothing reads the wall clock here.
+- Future and permanent reservations remain allocated. Released stock can be
+  reserved again. Repeating a release returns zero for previously released
+  reservations and must never inflate available stock or remove a new reservation.
+- Repeating an identical allocation keeps the existing idempotent behavior.
+- Persist optional expiry through the existing SQLAlchemy mapping; a new database
+  has a nullable date column for expiry, and legacy rows/calls without expiry work.
+  Reloaded reservations can be released, and release remains effective after reload.
+  Migrating an already-existing production database is outside this demonstration.
+
+Scope: change only domain/model.py, service_layer/services.py and adapters/orm.py.
+Keep tests, dependencies, entrypoints, configuration and Git metadata unchanged.
+The implementation must change at least two of those interacting modules. Do not
+copy acceptance tests into the target or replace them. No push, merge or deployment.
+Protected acceptance and original regression tests are outside the writable copy.
+Use the existing contained execution/check tools; test failures must remain visible.
+Project:     cosmic-expiry
+Root:        ~/harness-demo/stage2-run/cosmic
+Commit:      97267473c8accfd998bb9f756034eac48fa154f6
+Mode:        edit
+May change:  domain/model.py, service_layer/services.py, adapters/orm.py
+Checks:      pytest
+Acceptance:  ~/Github/harness/demo/stage2/acceptance/acceptance_expiry.py, ~/Github/harness/demo/stage2/regression
+Limits:      command_timeout_seconds 120, max_actions 60, max_output_chars 10000, max_retries 3
+Session: 20261101-010631-d68513c9
+
+=== Progress ===
+[context] suggested files: domain/model.py, service_layer/services.py, tests/unit/test_services.py, adapters/orm.py, tests/e2e/test_api.py, tests/integration/test_orm.py, tests/integration/test_repository.py, tests/unit/test_allocate.py
+[1] repo_map
+[2] find_symbol allocate
+[3] read_file domain/model.py
+[4] read_file service_layer/services.py
+[5] read_file adapters/orm.py
+Stopped: model error: Ollama did not answer within 420 seconds
+
+=== Actions ===
+[1] OK        repo_map
+[2] OK        find_symbol name='allocate'
+[3] OK        read_file path='domain/model.py'
+[4] OK        read_file path='service_layer/services.py'
+[5] OK        read_file path='adapters/orm.py'
+[6] FAILED    (model error)
+
+=== Changed Files ===
+(no changes)
+
+=== Checks ===
+TESTS: pytest
+python -m pytest -p no:cacheprovider
+Sandbox: docker (image harness-sandbox, no network, read-only repository)
+Exit code: 0
+PASS
+Tests executed: 24; skipped/expected failures: 0
+--- stdout ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.16, pytest-9.2.0, pluggy-1.7.0
+rootdir: /work
+collected 24 items
+
+tests/integration/test_orm.py ......                                     [ 25%]
+tests/integration/test_repository.py ..                                  [ 33%]
+tests/unit/test_allocate.py ....                                         [ 50%]
+tests/unit/test_batches.py ........                                      [ 83%]
+tests/unit/test_services.py ....                                         [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_orm.py::test_orderline_mapper_can_load_lines
+  /work/adapters/orm.py:38: RemovedIn20Warning: Deprecated API features detected! These feature(s) are not compatible with SQLAlchemy 2.0. To prevent incompatible upgrades prior to updating applications, ensure requirements files are pinned to "sqlalchemy<2.0". Set environment variable SQLALCHEMY_WARN_20=1 to show all deprecation warnings.  Set environment variable SQLALCHEMY_SILENCE_UBER_WARNING=1 to silence this message. (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    lines_mapper = mapper(model.OrderLine, order_lines)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 24 passed, 1 warning in 0.05s =========================
+--- stderr ---
+(empty)
+
+=== Tests ===
+TESTS: pytest
+python -m pytest -p no:cacheprovider
+Sandbox: docker (image harness-sandbox, no network, read-only repository)
+Exit code: 0
+PASS
+Tests executed: 24; skipped/expected failures: 0
+--- stdout ---
+============================= test session starts ==============================
+platform linux -- Python 3.12.16, pytest-9.2.0, pluggy-1.7.0
+rootdir: /work
+collected 24 items
+
+tests/integration/test_orm.py ......                                     [ 25%]
+tests/integration/test_repository.py ..                                  [ 33%]
+tests/unit/test_allocate.py ....                                         [ 50%]
+tests/unit/test_batches.py ........                                      [ 83%]
+tests/unit/test_services.py ....                                         [100%]
+
+=============================== warnings summary ===============================
+tests/integration/test_orm.py::test_orderline_mapper_can_load_lines
+  /work/adapters/orm.py:38: RemovedIn20Warning: Deprecated API features detected! These feature(s) are not compatible with SQLAlchemy 2.0. To prevent incompatible upgrades prior to updating applications, ensure requirements files are pinned to "sqlalchemy<2.0". Set environment variable SQLALCHEMY_WARN_20=1 to show all deprecation warnings.  Set environment variable SQLALCHEMY_SILENCE_UBER_WARNING=1 to silence this message. (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
+    lines_mapper = mapper(model.OrderLine, order_lines)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 24 passed, 1 warning in 0.05s =========================
+--- stderr ---
+(empty)
+
+=== Lint ===
+NOT CONFIGURED: lint
+
+=== Build ===
+NOT CONFIGURED: build
+
+=== Diff ===
+(no changes)
+
+=== Unfinished work / remaining problems ===
+- Task stopped with status error: Stopped: model error: Ollama did not answer within 420 seconds
+- External acceptance checks were recorded but not run by this verifier: ~/Github/harness/demo/stage2/acceptance/acceptance_expiry.py, ~/Github/harness/demo/stage2/regression
+
+=== Summary ===
+Run:          error (actions 6/60 | executed 5 | malformed 0 | denied 0 | tool errors 0 | truncated 0)
+Stopped:      a fatal error (for example the model was unreachable)
+Model says:   (the model did not finish) Stopped: model error: Ollama did not answer within 420 seconds
+Verification: PASS (1/1 checks passed)
+Task status:  unfinished
+Result:       FAILURE
+
+Task record written to ~/harness-demo/stage2-run/task-record.json
+Session 20261101-010631-d68513c9 saved in ~/harness-demo/stage2-run/sessions
+Inspect it with: python main.py show 20261101-010631-d68513c9 --session-dir ~/harness-demo/stage2-run/sessions

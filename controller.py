@@ -320,12 +320,21 @@ class Controller:
                     outcome, text = self._deny(problem)
                     self.record.add(step, "done", outcome=DENIED, detail=problem)
                 else:
-                    # Save a checkpoint naming the action we are ABOUT to run.
-                    # If the process dies now, the reopened session still has
-                    # it pending, so it is reported as uncertain, not replayed.
-                    self._checkpoint(messages, rejected_in_a_row, pending=action)
-                    # 3. Validate and run the tool, 4. send the result back.
-                    outcome, text = self.execute(action)
+                    # 3. Check arguments and permissions BEFORE checkpointing.
+                    # A refused action never runs, so it must not be recorded
+                    # as one whose outcome nobody knows.
+                    problem = self.check_permission(action)
+                    if problem:
+                        self._note(action, DENIED, problem)
+                        outcome, text = self._deny(problem)
+                    else:
+                        # 4. Save a checkpoint naming the action we are ABOUT
+                        # to run, THEN run it. If the process dies in between,
+                        # the reopened session still has it pending, so it is
+                        # reported as uncertain and never replayed.
+                        self._checkpoint(messages, rejected_in_a_row, pending=action)
+                        # 5. Run the tool, 6. send the result back.
+                        outcome, text = self.run_tool(action)
                 messages.append({"role": "user", "content": text})
                 rejected_in_a_row = rejected_in_a_row + 1 if outcome == DENIED else 0
 
@@ -513,12 +522,23 @@ class Controller:
 
         Returns (outcome, text): outcome is OK, DENIED or FAILED, and text is
         what gets sent back to the model.
+
+        The loop itself calls check_permission() and run_tool() separately, so
+        that a checkpoint is written only for an action that really is about to
+        run. This keeps both steps in one call for direct callers and tests.
         """
         problem = self.check_permission(action)
         if problem:
             self._note(action, DENIED, problem)
             return self._deny(problem)
+        return self.run_tool(action)
 
+    def run_tool(self, action):
+        """Run one action whose arguments and permissions have been checked.
+
+        Only ever called after check_permission() returned None, so everything
+        refused has already been refused before anything was written down.
+        """
         try:
             text = self.handlers[action.tool](**action.arguments)
         except AccessDeniedError as error:

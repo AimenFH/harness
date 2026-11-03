@@ -498,6 +498,45 @@ def test_an_interrupted_action_is_saved_as_pending(repo, store):
     assert saved.checkpoint.pending["arguments"]["path"] == "hello.py"
 
 
+def test_a_denied_action_is_never_checkpointed_as_pending(repo, store):
+    """Permissions are checked BEFORE the checkpoint, so a refusal stays a refusal.
+
+    An action that is refused never runs, so it must not be left in the
+    checkpoint as one whose outcome nobody knows. Otherwise a crash in the
+    window between the checkpoint and the refusal would report a write that
+    was never even attempted as uncertain.
+    """
+    spec = TaskSpec(request="Edit outside the scope", project="repo", root=str(repo),
+                    mode="edit", allowed_changes=("allowed.py",),
+                    limits={"max_actions": 5, "max_retries": 3})
+    session = Session(new_session_id(), spec)
+    harness = make_harness(repo, [
+        # Refused by the task's scope: hello.py is not in allowed_changes.
+        {"tool": "edit_file", "arguments": {"path": "hello.py", "content": "OWNED = 1\n"}},
+        {"tool": "done", "arguments": {}, "summary": "gave up"},
+    ], mode="edit", spec=spec, session=session, store=store)
+
+    # Every checkpoint written during the run, not just the last one: the final
+    # one always clears `pending`, so only the ones in between show the order.
+    pendings = []
+    original_save = store.save
+
+    def record_pending(saved_session):
+        pendings.append(saved_session.checkpoint.pending)
+        return original_save(saved_session)
+
+    store.save = record_pending
+    result = harness.controller.run(spec.request)
+
+    assert pendings, "the run saved no checkpoint at all"
+    assert all(p is None for p in pendings), f"a refused action was checkpointed: {pendings}"
+    saved = SessionStore(store.directory).load(session.id)
+    assert saved.checkpoint.pending is None
+    assert not restart(store, session.id).has_uncertain_action
+    assert [a.outcome for a in result.record.actions][0] == DENIED
+    assert (repo / "hello.py").read_text() != "OWNED = 1\n"
+
+
 def test_reopening_marks_the_interrupted_action_uncertain(repo, store):
     session, _ = killed_during(repo, store, "edit_file")
 
@@ -591,14 +630,14 @@ def test_a_cancelled_run_can_be_resumed(repo, store):
     ], spec=spec, session=session, store=store, cancel=cancel,
        allowed_changes=("hello.py",))
 
-    original = first.controller.execute
+    original = first.controller.run_tool
 
-    def execute_then_cancel(action):
+    def run_then_cancel(action):
         outcome = original(action)
         cancel.cancel("cancelled by the user")
         return outcome
 
-    first.controller.execute = execute_then_cancel
+    first.controller.run_tool = run_then_cancel
     stopped = first.controller.run(spec.request)
 
     assert stopped.status == CANCELLED

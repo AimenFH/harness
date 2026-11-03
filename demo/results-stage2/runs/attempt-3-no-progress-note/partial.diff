@@ -1,0 +1,27 @@
+diff --git a/domain/model.py b/domain/model.py
+index b320332..aa9dd9e 100644
+--- a/domain/model.py
++++ b/domain/model.py
+@@ -22,6 +22,7 @@ class OrderLine:
+     orderid: str
+     sku: str
+     qty: int
++    expires_at: Optional[date] = None
+ 
+ 
+ class Batch:
+diff --git a/service_layer/services.py b/service_layer/services.py
+index 36c7bd9..2592481 100644
+--- a/service_layer/services.py
++++ b/service_layer/services.py
+@@ -25,7 +25,9 @@ def add_batch(
+ 
+ def allocate(
+     orderid: str, sku: str, qty: int,
+-    repo: AbstractRepository, session
++    repo: AbstractRepository, session,
++    expires_at: Optional[date] = None,
++    now: Optional[date] = None
+ ) -> str:
+     line = OrderLine(orderid, sku, qty)
+     batches = repo.list()

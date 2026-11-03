@@ -1,0 +1,46 @@
+{
+  "command": [
+    "~/Github/harness/.venv/bin/python",
+    "-I",
+    "/protected/run_checks.py",
+    "acceptance"
+  ],
+  "result": {
+    "name": "protected-acceptance",
+    "command": [
+      "~/Github/harness/.venv/bin/python",
+      "-I",
+      "/protected/run_checks.py",
+      "acceptance"
+    ],
+    "exit_code": 2,
+    "stdout": "\n==================================== ERRORS ====================================\n____________________ ERROR collecting acceptance_expiry.py _____________________\n/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule\n    mod = import_path(\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path\n    mod = _import_module_using_spec(module_name, path, insert_modules=True)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec\n    spec.loader.exec_module(mod)  # type: ignore[union-attr]\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module\n    exec(co, module.__dict__)\n/protected/acceptance/acceptance_expiry.py:10: in <module>\n    from adapters import orm, repository\nE     File \"/work/adapters/orm.py\", line 43\nE       })\nE        ^\nE   SyntaxError: unmatched ')'\n=========================== short test summary info ============================\nERROR ../protected/acceptance/acceptance_expiry.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.34s\nHARNESS_STAGE2_REPORT={\"suite\": \"acceptance\", \"exit_code\": 2, \"tests\": 1, \"passed\": 0, \"failed\": 0, \"errors\": 1, \"skipped\": 0, \"cases\": [{\"name\": \"acceptance_expiry\", \"result\": \"errors\", \"detail\": \"/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule\\n    mod = import_path(\\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path\\n    mod = _import_module_using_spec(module_name, path, insert_modules=True)\\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec\\n    spec.loader.exec_module(mod)  # type: ignore[union-attr]\\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\\n/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module\\n    exec(co, module.__dict__)\\n/protected/acceptance/acceptance_expiry.py:10: in <module>\\n    from adapters import orm, repository\\nE     File \\\"/work/adapters/orm.py\\\", line 43\\nE       })\\nE        ^\\nE   SyntaxError: unmatched ')'\"}]}\n",
+    "stderr": "",
+    "timed_out": false,
+    "duration_seconds": 1.0400931670155842,
+    "no_tests_ran": false,
+    "sandbox": "docker (image harness-sandbox, no network, read-only repository)",
+    "cancelled": false,
+    "unavailable": false,
+    "skipped_tests": 0,
+    "tests_run": null
+  },
+  "report": {
+    "suite": "acceptance",
+    "exit_code": 2,
+    "tests": 1,
+    "passed": 0,
+    "failed": 0,
+    "errors": 1,
+    "skipped": 0,
+    "cases": [
+      {
+        "name": "acceptance_expiry",
+        "result": "errors",
+        "detail": "/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule\n    mod = import_path(\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path\n    mod = _import_module_using_spec(module_name, path, insert_modules=True)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec\n    spec.loader.exec_module(mod)  # type: ignore[union-attr]\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module\n    exec(co, module.__dict__)\n/protected/acceptance/acceptance_expiry.py:10: in <module>\n    from adapters import orm, repository\nE     File \"/work/adapters/orm.py\", line 43\nE       })\nE        ^\nE   SyntaxError: unmatched ')'"
+      }
+    ]
+  },
+  "counts_valid": false,
+  "passed": false
+}

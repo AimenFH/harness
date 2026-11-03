@@ -1,0 +1,19 @@
+# Settings for the Stage 2 feature run with a real model (qwen2.5-coder:7b).
+# The model runs locally in Ollama: no account, no API key, no secrets here.
+
+model_timeout_seconds = 420   # one Ollama reply; the bounded context keeps replies fast
+num_ctx = 16384               # context window asked of Ollama
+
+max_actions = 60
+max_retries = 3
+max_output_chars = 10000
+max_reply_tokens = 1200       # the shipped default; one action is a short JSON object
+
+# Context management (context.py). The budget is the documented size limit for
+# the whole conversation sent to the model; the full history stays in the session.
+context_budget_chars = 24000
+context_keep_turns = 3
+context_map = true
+
+sandbox = "docker"
+sandbox_image = "harness-sandbox"

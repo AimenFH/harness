@@ -1,0 +1,36 @@
+
+==================================== ERRORS ====================================
+____________________ ERROR collecting acceptance_expiry.py _____________________
+/usr/local/lib/python3.12/site-packages/_pytest/python.py:528: in importtestmodule
+    mod = import_path(
+/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:616: in import_path
+    mod = _import_module_using_spec(module_name, path, insert_modules=True)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/_pytest/pathlib.py:759: in _import_module_using_spec
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:185: in exec_module
+    exec(co, module.__dict__)
+/protected/acceptance/acceptance_expiry.py:10: in <module>
+    from adapters import orm, repository
+E     File "/work/adapters/orm.py", line 43
+E       })
+E        ^
+E   SyntaxError: unmatched ')'
+=========================== short test summary info ============================
+ERROR ../protected/acceptance/acceptance_expiry.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.34s
+acceptance: FAIL; exit=2; counts=1; sandbox=docker (image harness-sandbox, no network, read-only repository)
+
+ImportError while loading conftest '/protected/regression/tests/conftest.py'.
+/protected/regression/tests/conftest.py:12: in <module>
+    from adapters.orm import metadata, start_mappers
+E     File "/work/adapters/orm.py", line 43
+E       })
+E        ^
+E   SyntaxError: unmatched ')'
+
+regression: FAIL; exit=4; counts=0; sandbox=docker (image harness-sandbox, no network, read-only repository)
+Scope: PASS; changed=['adapters/orm.py', 'domain/model.py', 'service_layer/services.py']
+verify_exit=1

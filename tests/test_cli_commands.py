@@ -19,7 +19,7 @@ from navigation import RepositoryNavigator
 from projects import HARNESS_DIR, load_projects
 from session import Session, SessionStore, new_session_id
 from task_record import TaskSpec
-from tests.helpers import commit_all, hello_repo, make_harness
+from tests.helpers import commit_all, git, hello_repo, make_harness
 
 
 @pytest.fixture
@@ -308,6 +308,41 @@ def test_dangerous_approved_roots_are_rejected(env, root):
     env.projects_file.write_text(f'[projects]\nhello = {json.dumps(str(root))}\n')
     with pytest.raises(ValueError):
         load_projects(env.projects_file)
+
+
+def test_approved_project_with_a_git_remote_is_refused(env):
+    """An approved project is edited in place, so it must be a throwaway copy."""
+    git(env.root, 'remote', 'add', 'origin', 'https://example.invalid/upstream.git')
+    with pytest.raises(ValueError, match='disposable copy'):
+        load_projects(env.projects_file)
+    # Removing the remote, as `demo/demo.py prepare` does, makes it approvable.
+    git(env.root, 'remote', 'remove', 'origin')
+    assert load_projects(env.projects_file)['hello'] == env.root
+
+
+def test_start_refuses_a_project_that_is_not_a_disposable_copy(env, capsys):
+    git(env.root, 'remote', 'add', 'origin', 'https://example.invalid/upstream.git')
+    assert invoke(env, *start_args()) == 2
+    error = capsys.readouterr().err
+    assert 'disposable copy' in error
+    assert 'remote remove origin' in error      # it says how to fix it
+
+
+def test_legacy_root_without_an_allowlist_says_so_instead_of_looking_approved(tmp_path, capsys):
+    """The Stage 1 launch form has no allowlist; it must never look like it has."""
+    root = commit_all(hello_repo(tmp_path))
+    home = tmp_path / 'home'                     # no ~/.harness/projects.toml here
+    home.mkdir()
+    config = cli.parse_config(['--root', str(root), '--task', 'Look around',
+                               '--mode', 'readonly', '--model', 'fake'])
+    assert not config.approved
+    assert 'NONE - no allow-list' in config.summary()
+    assert 'warning: no approved project list' in capsys.readouterr().err
+
+
+def test_an_approved_run_reports_where_its_approval_came_from(env, capsys):
+    assert invoke(env, *start_args()) == 0
+    assert f'Approval: approved project list ({env.projects_file})' in capsys.readouterr().out
 
 
 def test_symlinks_are_canonical_and_duplicate_aliases_are_rejected(env):

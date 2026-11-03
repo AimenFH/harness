@@ -469,15 +469,16 @@ def test_cancellation_stops_before_the_next_action(tmp_path):
         {"tool": "edit_file", "arguments": {"path": "hello.py", "content": WRONG_HELLO}},
     ], cancel=cancel)
 
-    # Cancel as soon as the first action has been carried out.
-    original = h.controller.execute
+    # Cancel as soon as the first action has been carried out. run_tool is what
+    # carries an allowed action out, once check_permission has cleared it.
+    original = h.controller.run_tool
 
-    def execute_then_cancel(action):
+    def run_then_cancel(action):
         outcome = original(action)
         cancel.cancel("cancelled by the user")
         return outcome
 
-    h.controller.execute = execute_then_cancel
+    h.controller.run_tool = run_then_cancel
     result = h.controller.run("List files, then get cancelled")
 
     assert result.status == CANCELLED

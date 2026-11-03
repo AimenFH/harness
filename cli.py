@@ -148,6 +148,14 @@ def parse_config(argv=None):
             config.projects_file = str(projects_file)
         except ValueError as error:
             parser.error(str(error))
+    if not config.approved:
+        # The Stage 1 launch form has no allow-list. That is deliberate
+        # compatibility, but it must never look like an approved run: say so
+        # on stderr, and config.summary() records it in the run's own output.
+        print(f"warning: no approved project list applies to {config.root}. "
+              f"Create {DEFAULT_PROJECTS_FILE} (see projects.example.toml) and use "
+              "'start --project NAME', or pass --allowed-project, to enforce an "
+              "allow-list.", file=sys.stderr)
     return config
 
 
@@ -498,8 +506,7 @@ def main(argv=None, *, model_factory=None, sandbox_factory=None):
             show_task(saved)
             if args.live_diff:
                 root = approved_root(saved, approved_projects(args))
-                from verification import Verifier
-                live = Verifier(root, check_names=()).verify()
+                live = application.live_diff(root)
                 section('Current working-copy diff (no tests run)', live.diff_text())
         return 0
     except (ValueError, OSError, SessionError, RepositoryError, ScopeError, ExecutionError) as error:
