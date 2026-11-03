@@ -18,7 +18,7 @@ below. Nothing here is a scripted or hand-written result.
 | Modules in scope | `domain/model.py`, `service_layer/services.py`, `adapters/orm.py` |
 | Protected checks | 23 feature cases + 24 original upstream tests, hash-pinned, outside the agent's writable area, run in Docker |
 | Models used | `qwen2.5-coder:7b` and `qwen3:8b`, both local in Ollama (no account, no API key) |
-| Runs | 6, all recorded under `~/harness-demo/stage2-run/attempt-*` |
+| Runs | 7, all recorded under `~/harness-demo/stage2-run/attempt-*` |
 | Workspace | `~/harness-demo/stage2-run` (outside this repository) |
 | Environment | [`environment.json`](environment.json) |
 
@@ -83,6 +83,7 @@ this phase.
 | 4 | `qwen2.5-coder:7b` | `the model asked 3 times for an action that had already failed` at action 29 | With the trusted progress note added, it edited **all three** modules, ran the check, and worked the failure. It then wrote invalid Python into `adapters/orm.py` and could not repair it. **Best run; judged below.** |
 | 5 | `qwen3:8b` | `3 malformed or denied requests in a row (limit 3)` at action 7 | Never made an edit. Three replies of 3 000 tokens each with **empty content**: `max_reply_tokens` counts generated tokens, and a reasoning model can spend the entire limit on hidden thinking. The feedback for that case now says so instead of advising about whole files. |
 | 6 | `qwen2.5-coder:7b` | `action limit reached (60/60)` | Run with the new **syntax gate** (a write may not leave a Python file unparsable). The gate **fired once and worked** — one breaking edit refused, the file kept working, where run 4 had been stopped dead by the same mistake. The model then found a different way to waste the run: an identical `replace_in_file` applied **22 times**, succeeding every time. See below. |
+| 7 | `qwen2.5-coder:7b` | `the model asked 3 times for an action that had already failed` at action 31 | Run with the **no-futile-repeat** rule added. The growth edit was applied **once** and the identical repeat denied, against **23 applications** in run 6: `adapters/orm.py` stayed at 54 lines instead of 120, and the run stopped at 31 of 60 actions instead of exhausting them. The model moved on, then stalled on a `replace_in_file` whose `old` text was never in the file. |
 
 Each fix is described in [`docs/stage2-progress.md`](../../docs/stage2-progress.md)
 under "Phase 3 follow-up", with the evidence that motivated it.
@@ -118,12 +119,57 @@ clears that memory and resets the repeat counter whenever a file really changes
 *failed* actions but not futile *successful* ones.** The result was
 syntactically valid, so the new gate had no reason to fire either.
 
-This is the one harness defect from these runs that is still open. It is listed
-under "what is needed" below.
+### Run 7: both rules in place
+
+The no-futile-repeat rule closed that gap, and the difference is measurable on
+the same model with the same settings:
+
+| | run 6 | run 7 |
+|---|---|---|
+| applications of the growth edit | **23** | **1** (the repeat denied) |
+| `adapters/orm.py` after the run | 120 lines | 54 lines |
+| actions used | 60 of 60, exhausted | 31 of 60, stopped with a reason |
+
+```text
+[15] OK      replace_in_file adapters/orm.py   (the growth edit, applied once)
+[16] OK      run_check -> FAILED (exit code 1)
+[17] DENIED  replace_in_file adapters/orm.py
+             Permission denied: you have already made this exact change and it is
+             in the file. Making it again cannot be progress. Read the file to see
+             how it looks now, then make the NEXT change the task needs.
+[18] OK      read_file adapters/orm.py          (it moved on)
+```
+
+Run 7 then stalled elsewhere: eleven actions trying to replace
+`def allocate(orderid, sku, qty, repo, session):` in `service_layer/services.py`,
+a one-line signature that is not in the file (the real one spans three lines).
+Three tool errors, then three identical denials, then the no-progress rule
+ended it at action 31.
+
+Its code fails at **import**, not at parse: the model inserted the defaulted
+`expires_at` field *before* `orderid` in the `@dataclass OrderLine`, giving
+`TypeError: non-default argument 'orderid' follows default argument`. All three
+files parse cleanly, so the syntax gate correctly did not fire — catching this
+would require *importing* repository code, which the harness never does outside
+the sandbox. The sandboxed `run_check` did catch it at actions 13 and 16; the
+model simply could not act on the information.
+
+So run 7 is better harness behaviour and worse acceptance numbers than run 6 —
+the model happened to stop somewhere less complete. Both are recorded below.
 
 ## Step 4 — the protected checks judge the runs
 
-### Run 6 (latest)
+### Run 7 (latest)
+
+```text
+acceptance: FAIL; exit=2; counts=1   ->  1 error during collection
+regression: FAIL; exit=4; counts=0
+Scope:      PASS; changed=['adapters/orm.py', 'domain/model.py', 'service_layer/services.py']
+```
+
+Fails at import, as described above: the dataclass field order. Scope passes.
+
+### Run 6
 
 ```text
 acceptance: FAIL; exit=1; counts=23  ->  1 passed, 20 failed, 2 errors
@@ -186,6 +232,7 @@ Every one of these is from the live runs above, not from the test suite:
 | Contained execution | every check `sandbox=docker (image harness-sandbox, no network, read-only repository)` |
 | Repository text kept untrusted | every tool result arrives inside `----- BEGIN UNTRUSTED REPOSITORY DATA: <tool> -----` markers |
 | Bounded retries, clear stopping rule | all five runs stopped on a named rule with a reason in words — never a hang, never a silent failure |
+| A futile repeat is refused | run 7 action 17: `you have already made this exact change and it is in the file` — one application instead of run 6's 23, and the run stopped at 31 of 60 actions instead of exhausting them |
 | A write may not break a file | run 6: `Refused: this change would leave 'adapters/orm.py' with invalid Python (line 43: unmatched ')'). The file was NOT changed.` — and the file stayed parsable for the remaining 44 actions |
 | Nothing passes that did not pass | final status `unfinished`, `Verification: FAIL`, and the saved acceptance commands reported as unfinished work rather than assumed |
 | Saved sessions | `attempt-*/sessions/*.json` reopen with `main.py show <id> --session-dir ...` after the process has ended |
@@ -199,24 +246,24 @@ the one-action-per-reply format at all.
 
 Options for Part 3, in the order I would try them:
 
-1. **Stop a futile *successful* action, not just a futile failed one.** Run 6's
-   open defect. An identical `(tool, arguments)` that has already been applied
-   should be refused — "you already made this exact change" — and counted like
-   the existing repeat denials. With `replace_in_file` an identical repeat is
-   normally harmless because `old` no longer matches; it only succeeds when
-   `new` contains `old`, which is precisely the self-perpetuating case. This is
-   small, mirrors the existing `failed_actions` design, and would have saved 44
-   of run 6's 60 actions.
-2. **A stronger model.** Six runs in, every harness fix has exposed the next
-   model weakness rather than a harness one, and the model has never reached the
-   feature's behaviour. The same task on a larger model is the control that
-   would settle whether anything is left to fix in the harness at all.
-3. **Smaller task steps.** The task asks for five related API changes at once.
+1. **A stronger model.** Seven runs in, every harness fix has exposed the next
+   *model* weakness rather than another harness one, and across all seven the
+   model added only signatures and never reached `Batch.release_expired`,
+   `services.release_expired` or `services.InvalidExpiry`. The same task on a
+   larger model is the control that would settle whether anything is left to fix
+   in the harness at all. This is now the first thing I would do.
+2. **Smaller task steps.** The task asks for five related API changes at once.
    Splitting it would suit a small local model, at the cost of being a weaker
    demonstration of the harness.
+3. **Better guidance when `old` is not found.** Run 7 spent eleven actions on a
+   signature that was not in the file. The error says "read the file again and
+   copy the lines exactly"; it could also show the closest lines it did find.
+   Speculative — it may just move the wall rather than remove it.
 
-The syntax gate that was first on this list has been built; it is item 5 under
-"Resource Limits" in the main README, and run 6 shows it working.
+Both fixes that were on this list have been built and are shown working above:
+the **syntax gate** (run 6) and the **no-futile-repeat rule** (run 7). They are
+items 5 and 7 under "Resource Limits" and "Security & Containment" in the main
+README.
 
 ## Manual help, stated for the record
 

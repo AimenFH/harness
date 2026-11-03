@@ -15,7 +15,7 @@ import os
 
 import pytest
 
-from controller import ACTION_LIMIT, DONE, UNCERTAIN
+from controller import ACTION_LIMIT, DENIED, DONE, UNCERTAIN
 from session import (FINISHED, INTERRUPTED, RUNNING, Checkpoint, Session, SessionError,
                      SessionStore, check_resume, file_digest, new_session_id)
 from task_record import TaskSpec
@@ -629,3 +629,50 @@ def test_only_done_is_treated_as_finished():
     for status in ("cancelled", "error", "action_limit_reached", "retry_limit_reached"):
         assert status not in FINISHED, f"{status} should stay resumable"
     assert FINISHED == ("done",)
+
+
+def test_a_write_that_landed_before_the_restart_may_not_be_repeated_after_it(repo, store):
+    """The applied-write memory is part of the checkpoint, not just run state.
+
+    Otherwise a resumed run would happily re-apply an edit it had already made
+    — which, for a replacement whose `new` text contains its `old` text, starts
+    the unbounded growth all over again (see demo/results-stage2/RESULTS.md).
+    """
+    spec = spec_for(repo)
+    session = Session(id=new_session_id(), spec=spec)
+    grow = {"tool": "replace_in_file", "arguments": {"path": "hello.py",
+                                                     "old": "def greet():",
+                                                     "new": "def greet():  # noted"}}
+    first = make_harness(repo, [grow], spec=spec, session=session, store=store,
+                         allowed_changes=("hello.py",))
+    first.controller.run(spec.request)
+    assert (repo / "hello.py").read_text().count("# noted") == 1
+
+    reopened = restart(store, session.id)
+    assert [tuple(entry) for entry in reopened.checkpoint.applied_actions] != []
+
+    second = make_harness(repo, [grow, {"tool": "done", "arguments": {}, "summary": "stop"}],
+                          spec=reopened.spec, session=reopened, store=store,
+                          allowed_changes=("hello.py",))
+    second.controller.resume(reopened)
+
+    repeated = [a for a in second.controller.record.actions
+                if a.tool == "replace_in_file" and a.outcome == DENIED]
+    assert len(repeated) == 1
+    assert "already made this exact change" in repeated[0].detail
+    assert (repo / "hello.py").read_text().count("# noted") == 1   # not applied twice
+
+
+def test_an_older_checkpoint_without_the_applied_list_still_reopens(repo, store):
+    """Sessions saved before this field existed must keep working."""
+    spec = spec_for(repo)
+    session = Session(id=new_session_id(), spec=spec)
+    store.save(session)
+    path = store.directory / f"{session.id}.json"
+    data = json.loads(path.read_text())
+    data["checkpoint"].pop("applied_actions", None)
+    path.write_text(json.dumps(data))
+
+    reopened = restart(store, session.id)
+
+    assert reopened.checkpoint.applied_actions == []

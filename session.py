@@ -102,6 +102,7 @@ class Checkpoint:
     read_files: list = field(default_factory=list)
     partly_read: list = field(default_factory=list)
     failed_actions: list = field(default_factory=list)  # [[tool, arguments-json], ...]
+    applied_actions: list = field(default_factory=list)  # writes already carried out
     repeats: int = 0
     rejected_in_a_row: int = 0
     checked_since_edit: bool = False
@@ -118,6 +119,7 @@ class Checkpoint:
             "file_digests": dict(self.file_digests), "read_files": list(self.read_files),
             "partly_read": list(self.partly_read),
             "failed_actions": [list(entry) for entry in self.failed_actions],
+            "applied_actions": [list(entry) for entry in self.applied_actions],
             "repeats": self.repeats, "rejected_in_a_row": self.rejected_in_a_row,
             "checked_since_edit": self.checked_since_edit, "last_check": self.last_check,
             "branch": self.branch, "commit": self.commit, "dirty": list(self.dirty),
@@ -136,6 +138,7 @@ class Checkpoint:
             read_files=list(data.get("read_files", [])),
             partly_read=list(data.get("partly_read", [])),
             failed_actions=[tuple(entry) for entry in data.get("failed_actions", [])],
+            applied_actions=[tuple(entry) for entry in data.get("applied_actions", [])],
             repeats=data.get("repeats", 0),
             rejected_in_a_row=data.get("rejected_in_a_row", 0),
             checked_since_edit=data.get("checked_since_edit", False),

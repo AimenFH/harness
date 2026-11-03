@@ -16,7 +16,7 @@ import json
 import pytest
 
 from config import Config
-from controller import (ACTION_LIMIT, CANCELLED, DENIED, DONE, ERROR, RETRY_LIMIT,
+from controller import (ACTION_LIMIT, CANCELLED, DENIED, DONE, ERROR, OK, RETRY_LIMIT,
                         STOPPING_RULES)
 from controller import FAILED as FAILED_OUTCOME
 from model_client import Action
@@ -794,3 +794,108 @@ def test_an_edit_that_would_break_the_file_is_refused_and_the_loop_recovers(tmp_
     assert "line" in refused
     # The file was never broken, so the check at the end could still run.
     assert (root / "hello.py").read_text() == 'def greet():\n    return "hello"  # checked\n'
+
+
+# ----- a write that already landed may not be repeated ----------------------
+
+def test_an_identical_edit_that_already_succeeded_is_denied(tmp_path):
+    """The Stage 2 feature run's second failure: a *successful* futile repeat.
+
+    A real qwen2.5-coder run sent a replace_in_file whose `new` text contained
+    its `old` text. After each replacement `old` was still present exactly
+    once, so the identical call succeeded again and appended another duplicate
+    block -- 22 times, until the action limit ran out. The failed-action memory
+    could not catch it: the action never failed, and _record_change clears that
+    memory whenever a file really changes, which this one did every time.
+    See demo/results-stage2/RESULTS.md.
+    """
+    root = write_repo(tmp_path / "repo", {"hello.py": RIGHT_HELLO,
+                                          "tests/test_hello.py": PASSING_TEST})
+    # new contains old, so without the rule this applies for ever.
+    grow = {"tool": "replace_in_file",
+            "arguments": {"path": "hello.py", "old": "def greet():",
+                          "new": "def greet():\n    # noted"}}
+    h = make_harness(root, [grow, grow, grow, grow,
+                            {"tool": "done", "arguments": {}, "summary": "never reached"}],
+                     allowed_changes=("hello.py",), max_retries=3)
+
+    result = h.controller.run("Grow the file for ever")
+
+    assert result.status == RETRY_LIMIT
+    assert result.counters.executed == 1      # it was applied exactly once
+    assert result.counters.denied == 3
+    assert (root / "hello.py").read_text().count("# noted") == 1
+    denied = [a for a in result.record.actions if a.outcome == DENIED]
+    assert all("already made this exact change" in a.detail for a in denied)
+    assert "NEXT change" in denied[0].detail
+
+
+def test_wrapping_existing_text_still_works_once(tmp_path):
+    """The rule must not block the legitimate version of the same shape.
+
+    An edit whose `new` text contains its `old` text is normal and useful --
+    wrapping a line in a condition, adding a decorator. Only *repeating* it is
+    refused, and a different change to the same file is unaffected.
+    """
+    root = write_repo(tmp_path / "repo", {"hello.py": RIGHT_HELLO,
+                                          "tests/test_hello.py": PASSING_TEST})
+    h = make_harness(root, [
+        {"tool": "replace_in_file", "arguments": {
+            "path": "hello.py", "old": '    return "hello"',
+            "new": '    if True:\n        return "hello"'}},
+        {"tool": "replace_in_file", "arguments": {
+            "path": "hello.py", "old": "def greet():", "new": "def greet():  # one"}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "wrapped and noted"},
+    ], allowed_changes=("hello.py",))
+
+    result = h.controller.run("Wrap the return")
+
+    assert result.status == DONE
+    assert result.succeeded
+    assert result.counters.denied == 0
+    text = (root / "hello.py").read_text()
+    assert "if True:" in text and "# one" in text
+
+
+def test_rewriting_a_file_with_identical_content_is_denied(tmp_path):
+    """edit_file twice with the same content is a no-op, so it is refused."""
+    root = write_repo(tmp_path / "repo", {"hello.py": RIGHT_HELLO,
+                                          "tests/test_hello.py": PASSING_TEST})
+    write = {"tool": "edit_file",
+             "arguments": {"path": "hello.py", "content": 'def greet():\n    return "hi"\n'}}
+    h = make_harness(root, [
+        {"tool": "read_file", "arguments": {"path": "hello.py"}},   # required before edit_file
+        write, write,
+        {"tool": "done", "arguments": {}, "summary": "never reached"},
+    ], allowed_changes=("hello.py",))
+
+    result = h.controller.run("Write the same file twice")
+
+    denied = [a for a in result.record.actions
+              if a.outcome == DENIED and a.tool == "edit_file"]
+    assert len(denied) == 1
+    assert "already made this exact change" in denied[0].detail
+    # The write happened exactly once; the repeat never reached the file.
+    assert [a.outcome for a in result.record.actions if a.tool == "edit_file"] == [OK, DENIED]
+    assert (root / "hello.py").read_text() == 'def greet():\n    return "hi"\n'
+
+
+def test_run_check_may_still_be_repeated_after_an_edit(tmp_path):
+    """The new rule is about writes; a check legitimately gives a new answer."""
+    root = write_repo(tmp_path / "repo", {"hello.py": RIGHT_HELLO,
+                                          "tests/test_hello.py": PASSING_TEST})
+    h = make_harness(root, [
+        {"tool": "replace_in_file", "arguments": {
+            "path": "hello.py", "old": "def greet():", "new": "def greet():  # one"}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "run_check", "arguments": {}},
+        {"tool": "done", "arguments": {}, "summary": "checked three times"},
+    ], allowed_changes=("hello.py",))
+
+    result = h.controller.run("Check repeatedly")
+
+    assert result.status == DONE
+    assert result.counters.denied == 0
+    assert h.executor.calls == ["unittest", "unittest", "unittest"]

@@ -92,7 +92,7 @@ The full history is always saved with the session: the budget limits what is
 | `cli.py` | **Interface** | Subcommands, argument validation, progress and saved-result presentation; no controller loop. |
 | `application.py` | **Task services** | Start/resume/cancel orchestration, sandbox/model wiring, final verification and saved results; no argument parsing. |
 | `projects.py` | **Project approvals** | Strict TOML configuration, canonical repository paths, protected control-file locations. |
-| `session.py` | **Persistence** | Atomic checkpoints, saved history/checks/diff, safe-resume validation, one runner per task. |
+| `session.py` | **Persistence** | Atomic checkpoints (including the failed and already-applied action memories), saved history/checks/diff, safe-resume validation, one runner per task. |
 | `controller.py` | **Orchestration** | The agentic loop: Request $\rightarrow$ Validate $\rightarrow$ Execute $\rightarrow$ Return. |
 | `model_client.py` | **LLM Bridge** | Integration with Ollama; handles system prompting and JSON parsing. |
 | `repository_tools.py` | **File Access** | Secure implementations of `read`, `search`, `list`, and `edit`; a write may not leave a Python file unparsable (`syntax_problem`, AST only). |
@@ -123,6 +123,7 @@ To prevent the LLM from performing destructive actions or accessing sensitive da
     *   **Context Budget**: The whole conversation sent to the model is rebuilt inside `context_budget_chars` for every request (see [Context management](#context-management)).
     *   **Reply Limit**: `max_reply_tokens` caps one model reply. One action is a short JSON object; without the cap a model that starts rewriting a whole file generates until the context window is full, which only ever surfaces as a request timeout. A cut-off reply is reported to the model as a malformed one and counted, never parsed. It counts *generated* tokens, so for a reasoning model — where most of them are hidden thinking — it has to be set higher than the default (see [the Stage 2 feature run](demo/results-stage2/RESULTS.md)).
     *   **Denied Action Tracking**: The session terminates if the model repeatedly requests forbidden actions.
+    *   **No Futile Repeats**: An action that already **failed** with exactly these arguments is refused while the repository is unchanged, and a write that already **succeeded** with exactly these arguments is refused for the rest of the run. The second case matters because a replacement whose `new` text contains its `old` text leaves `old` in place, so the identical call keeps succeeding — a real run applied one 22 times and burned its whole action limit. Both refusals are counted, so `max_retries` ends the run with a reason. `run_check` is exempt: its answer legitimately changes. Writing *different* text to the same file is unaffected, so wrapping a line in a condition still works.
 5.  **A Write May Not Break The File**: A Python file that parses before a change must still parse after it. The resulting text is checked with `ast.parse` (parsed, never imported or run) *before* anything is written; if it would be invalid, the write is refused with the offending line and the file is left untouched. One broken edit otherwise makes every check fail at once — with a collection error, not a test failure — and a model that cannot match the text it just broke may never repair it. A file that is *already* unparsable is never blocked, so a repair is always possible, and non-Python files are not checked. This is what the Stage 2 feature run needed; see [demo/results-stage2/RESULTS.md](demo/results-stage2/RESULTS.md).
 6.  **`done` Must Be Earned**: After changing files, the model may only call `done` once a check has *passed* since its last change. Otherwise `done` is refused and the model is told why (3 refusals in a row stop the run). With no changes, `done` is always allowed, so the model can still report that it could not fix the task.
 
@@ -474,7 +475,7 @@ tests remain independent of a live model; repository checks run inside Docker.
 **Coverage includes**:
 - ✅ **Tool Safety**: Verification that paths outside `--root` are rejected, and that a write cannot leave a Python file unparsable (while an already-broken file can still be repaired).
 - ✅ **Controller Logic**: Validation of the action loop and tool routing.
-- ✅ **Limit Enforcement**: Testing that action limits and output truncations work.
+- ✅ **Limit Enforcement**: Testing that action limits, reply-token limits and output truncations work, and that a futile repeat of a failed *or already-applied* action is refused and counted.
 - ✅ **Error Handling**: Ensuring invalid tool requests return clear errors.
 - ✅ **Sandbox**: The container sees no secrets, host files or network and cannot write the repository; a timeout removes the container.
 - ✅ **Settings**: The example file matches the defaults; unknown or invalid settings are rejected.

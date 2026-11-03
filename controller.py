@@ -159,7 +159,8 @@ class Controller:
         self.session = session
         self.store = store
         self.failed_actions = set()  # actions that already failed; see _repeat_problem
-        self.repeats = 0             # denied requests to repeat a failed action
+        self.applied_actions = set()  # writes already carried out; see _repeat_problem
+        self.repeats = 0             # denied requests to repeat a pointless action
         self.partly_read = set()     # files the model has only seen truncated
         self.read_files = set()      # files the model has seen in full this run
         # Fresh run state, so execute() and check_permission() also work when
@@ -205,6 +206,7 @@ class Controller:
         self.read_files = set()   # files the model has seen in full this run
         self.checked_since_edit = False  # a check PASSED after the last file change
         self.failed_actions = set()
+        self.applied_actions = set()
         self.repeats = 0
         self.record = TaskRecord(spec=self.spec)
         messages = initial_messages(task, self.config.mode, self._check_names(),
@@ -231,6 +233,7 @@ class Controller:
         self.read_files.discard(None)
         self.checked_since_edit = saved.checked_since_edit
         self.failed_actions = {tuple(entry) for entry in saved.failed_actions}
+        self.applied_actions = {tuple(entry) for entry in saved.applied_actions}
         self.repeats = saved.repeats
         self.last_check = None  # the CommandResult itself is not saved; see below
         self.record = TaskRecord(spec=self.spec, actions=list(session.actions))
@@ -468,7 +471,17 @@ class Controller:
         return self._repeat_problem(action)
 
     def _repeat_problem(self, action):
-        """Refuse an action that already failed with exactly these arguments.
+        """Refuse an action that cannot make progress with exactly these arguments.
+
+        Two cases. The first is an action that already **failed**; see below.
+        The second is a write that already **succeeded**: repeating it is at
+        best a no-op, and at worst unbounded. A real qwen2.5-coder run sent a
+        replace_in_file whose `new` text contained its `old` text, so after each
+        replacement `old` was still present exactly once; the identical call
+        succeeded 22 times, appended 22 duplicate blocks, and burned the whole
+        action limit. Nothing caught it, because the failed-action memory only
+        holds failures and _record_change clears it whenever a file really
+        changes -- which that action did, every time.
 
         Without this, a model that cannot get `old` right retries the same
         replace_in_file until the action limit runs out: every attempt is a
@@ -482,7 +495,13 @@ class Controller:
         """
         if action.tool == "run_check":  # its result legitimately changes
             return None
-        if _action_key(action) not in self.failed_actions:
+        key = _action_key(action)
+        if key in self.applied_actions:
+            self.repeats += 1
+            return ("Permission denied: you have already made this exact change and it "
+                    "is in the file. Making it again cannot be progress. Read the file "
+                    "to see how it looks now, then make the NEXT change the task needs.")
+        if key not in self.failed_actions:
             return None
         self.repeats += 1
         return ("Permission denied: this exact action already failed once and the "
@@ -514,6 +533,11 @@ class Controller:
 
         self._note(action, OK, text)
         self.counters.executed += 1
+        if action.tool in EDIT_TOOLS:
+            # Remembered for the whole run, and deliberately NOT cleared by
+            # _record_change: an identical write that has already landed can
+            # never become progress, however much the repository changes.
+            self.applied_actions.add(_action_key(action))
         text, was_cut = truncate(text, self.config.max_output_chars)
         if was_cut:
             self.counters.truncated += 1
@@ -653,6 +677,7 @@ class Controller:
             read_files=sorted(self._relative_of(key) for key in self.read_files),
             partly_read=sorted(self._relative_of(key) for key in self.partly_read),
             failed_actions=[list(entry) for entry in sorted(self.failed_actions)],
+            applied_actions=[list(entry) for entry in sorted(self.applied_actions)],
             repeats=self.repeats,
             rejected_in_a_row=rejected_in_a_row,
             checked_since_edit=self.checked_since_edit,

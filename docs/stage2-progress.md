@@ -1627,3 +1627,130 @@ a nullable column — and never reached `Batch.release_expired`,
 feature actually consists of. The honest reading is that this task is beyond a
 7B local model, and that a larger model is now the control worth running before
 assuming anything else is missing from the harness.
+
+---
+
+## Phase 12 — a write that already landed may not be repeated (2026-11-03)
+
+Run 6's open defect, closed. It is the last of the four weaknesses the real
+feature runs exposed, and the only one that could waste an entire run.
+
+### The gap
+
+`_repeat_problem` refused an action that had already **failed**. Nothing
+refused one that had already **succeeded** — and `_record_change()` deliberately
+clears the failed-action memory and resets `repeats` whenever a file really
+changes, because then a previously failed action may well work.
+
+A write that succeeds *and* achieves nothing slipped through both. Run 6's was:
+
+```text
+old = 'mapper(model.OrderLine, order_lines,'
+new = 'mapper(model.OrderLine, order_lines, properties={ ... }),\n    mapper(model.Batch, batches,'
+```
+
+`new` contains `old`, so `old` survives the replacement, still exactly once.
+The identical call therefore succeeded 22 times, each one appending another
+duplicate block and each one resetting the repeat counter it should have been
+tripping. Only the action limit stopped it, at 60/60.
+
+### The rule
+
+`self.applied_actions` remembers every write that was carried out, as
+`(tool, arguments-json)` — the same identity `failed_actions` uses. An identical
+write is then refused for the rest of the run:
+
+```text
+Permission denied: you have already made this exact change and it is in the
+file. Making it again cannot be progress. Read the file to see how it looks
+now, then make the NEXT change the task needs.
+```
+
+Design points worth stating, because each one is a decision:
+
+| Decision | Why |
+|---|---|
+| Writes only (`EDIT_TOOLS`) | Re-reading a file is normal and often necessary after an edit; only a repeated *write* is meaningless. |
+| `run_check` stays exempt | Its answer legitimately changes — that is the whole edit–test–fix loop. |
+| **Never** cleared by `_record_change` | The opposite of `failed_actions`, and the entire point: an identical write that has already landed can never become progress, however much the repository changes. |
+| Counted in `repeats` | So `max_retries` ends the run with the existing "not making progress" reason instead of letting it drift to the action limit. |
+| A *different* change to the same file is untouched | Only the exact `(tool, arguments)` is remembered, so wrapping a line in a condition — a legitimate edit whose `new` contains its `old` — still works, once. |
+| Saved in the checkpoint | Otherwise a resumed run would re-apply an edit it had already made, restarting the growth. `Checkpoint.from_dict` uses `.get()`, so sessions written before this field still reopen. |
+
+### Tests
+
+Six new. Four in `tests/test_task_execution.py`: run 6's exact growth pattern
+denied after one application with the file containing one copy and the run
+stopping on the retry limit; the legitimate wrapping edit still working once,
+with a different change to the same file alongside it; an identical `edit_file`
+refused while the first write stands; and `run_check` still repeatable after an
+edit. Two in `tests/test_sessions.py`: a write that landed before a restart is
+refused after it, and an older checkpoint without the field still reopens.
+
+Suite: **498 passed** (492 + 6). The two ruff findings in
+`tests/test_sessions.py` are pre-existing and unrelated.
+
+### All four findings, in one place
+
+| # | Weakness | Fix | Phase |
+|---|---|---|---|
+| 1 | A reply could generate until the context window was full | `max_reply_tokens`, cut-off reported as malformed | 3 follow-up |
+| 2 | A cut-off reply was echoed back in full, costing the budget and anchoring the mistake | `cut_off_preview()` | 3 follow-up |
+| 3 | Compression hid the model's own edits from it | trusted `state_note()`, rebuilt per request | 3 follow-up |
+| 4 | A futile *successful* write could repeat for ever | `applied_actions` | 12 |
+
+Plus the syntax gate (Phase 11), which came from the same runs but was a
+missing safety rule rather than a defect in an existing one. Every one of the
+five was found by running a real model, and none of them by the 443 tests that
+existed before.
+
+### Phase 12 validation — measured against run 6
+
+Run 7, same model and settings as run 6, so the only variable is the new rule:
+
+| | run 6 | run 7 |
+|---|---|---|
+| applications of the growth edit | **23** | **1** (the repeat denied) |
+| `adapters/orm.py` after the run | 120 lines | 54 lines |
+| actions used | 60 of 60, exhausted | 31 of 60, stopped with a reason |
+
+```text
+[15] OK      replace_in_file adapters/orm.py   (applied once)
+[16] OK      run_check -> FAILED (exit code 1)
+[17] DENIED  replace_in_file adapters/orm.py
+             Permission denied: you have already made this exact change and it is
+             in the file. Making it again cannot be progress. ...
+[18] OK      read_file adapters/orm.py          (it moved on)
+```
+
+The rule did exactly what it was built for, and the model moved on instead of
+spinning. It then stalled elsewhere — eleven actions trying to replace a
+one-line `def allocate(orderid, sku, qty, repo, session):` that is not in the
+file, the real signature spanning three lines — and the no-progress rule ended
+the run at 31.
+
+Run 7's code fails at **import**, not at parse: the defaulted `expires_at`
+field was inserted *before* `orderid` in the `@dataclass OrderLine`, giving
+`TypeError: non-default argument 'orderid' follows default argument`. All three
+files parse cleanly, so the Phase 11 gate correctly did not fire. Catching this
+would require *importing* repository code, which the harness never does outside
+the sandbox — and the sandboxed `run_check` did catch it, at actions 13 and 16.
+The information was there; the model could not use it.
+
+So run 7 is better harness behaviour and worse acceptance numbers than run 6:
+the model happened to stop somewhere less complete. Both verdicts are recorded
+in `RESULTS.md` rather than only the flattering one.
+
+### Where Stage 2 ends
+
+Seven real-model runs. Five harness weaknesses found and fixed, none of them
+caught by the 443 tests that existed before — the suite is now **498**. The
+feature itself is **not implemented**: across all seven runs the model added
+only signatures and never reached `Batch.release_expired`,
+`services.release_expired` or `services.InvalidExpiry`.
+
+Every harness fix has exposed the next *model* weakness rather than another
+harness one, which is the clearest signal available that the remaining gap is
+model capability. A larger model is the control worth running before assuming
+anything else is missing here, and that is the first item under "what is needed"
+in `RESULTS.md`.
